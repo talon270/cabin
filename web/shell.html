@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<!--
+  CABIN · PAGE SHELL
+  · layout: header bar, yard panel (two thirds), rack of three bays
+  · input: drag pans, wheel zooms; what they mean is decided in the wasm App
+  · theme tokens: Nothing OS Classic, light and dark (md/designs.md), with
+    twr's measured dark contrast values
+  · storage: one key, `cabin.v1`, integer schema version, migration hook
+  · boot: decode the inlined wasm, start the frame loop
+  · failure: any boot or runtime error shows as an inline banner, never a modal
+  Public namespace: window.CABIN
+  build.sh replaces the BUNDLE marker below with the wasm-bindgen glue and the
+  base64 wasm, so the finished page opens from file:// with no fetch.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cabin</title>
+<script>
+  // Pick the theme before the first paint, so a saved-light page never
+  // flashes dark. Saved choice first, else the system's. boot() applies the
+  // same rule again through the store, with migrations.
+  try {
+    const s = JSON.parse(localStorage.getItem("cabin.v1") || "null");
+    const t = s && s.settings && s.settings.theme;
+    document.documentElement.dataset.theme = t === "light" || t === "dark" ? t
+      : matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  } catch (e) { /* unreadable store: boot() reports it; keep the markup default */ }
+</script>
+<style>
+  /* Nothing OS Classic, sourcing weak (tagged `blog` in designs.md). Its red
+     is dropped (plan A7): red, yellow and green are signal aspects and
+     appear in signal heads only, so this sheet defines none of them.
+     Dark values are twr's, measured against #000 on 2026-11-11: --hair
+     3.91:1, --line 3.07:1, --dim 9.28:1; the designs.md #2a2a2c line is
+     1.47:1 and vanishes on black. Fonts are named: on this machine the
+     generic sans-serif resolves to JetBrains Mono. */
+  :root { --sans: "Liberation Sans", Arial, "Helvetica Neue", Helvetica, sans-serif;
+          --mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
+          --fg: #000; --bg: #fff; --dim: #585a5a; --line: #c4c6c8; --hair: #b8b8bc; --panel: #f4f4f5; }
+  :root[data-theme="dark"] { --fg: #fff; --bg: #000; --dim: #acacb0; --line: #5a5a60; --hair: #6a6a70; --panel: #0b0b0c; }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+  body { font: 13px/1.4 var(--sans); display: flex; flex-direction: column; overflow: hidden; }
+
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 24px; padding: 8px 16px;
+         border-bottom: 1px solid var(--hair); }
+  .bar > span { white-space: nowrap; }
+  .bar .grow { flex: 1; }
+  .label { font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .brand { font: 700 13px var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+  /* Tabular numbers (UI card No. 14), with reserved width so the bar never
+     changes height as the clock ticks. */
+  .val { display: inline-block; font-variant-numeric: tabular-nums lining-nums; text-align: right; }
+  #clock { min-width: 5ch; }
+  /* Nothing OS feedback: an inline [SAVED], no toast. */
+  .saved { font: 11px var(--mono); letter-spacing: .08em; color: var(--dim); visibility: hidden; }
+  .saved.on { visibility: visible; }
+
+  /* Controls have depth (memory.md, 2026-11-15: 3 px border, hard 5 px
+     shadow, 5 px press travel, ink shadow on dark too). Press inverts fill
+     and text; the look's "click, not swoosh" sets 100 ms linear. */
+  :root { --bw: 3px; --sh: 5px 5px 0 var(--fg); --sh-0: 0 0 0 var(--fg); }
+  button { font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase;
+           height: 44px; padding: 0 12px; border: var(--bw) solid var(--fg); border-radius: 6px;
+           background: var(--bg); color: var(--fg); cursor: pointer; box-shadow: var(--sh);
+           transition: background-color 100ms linear, color 100ms linear, transform 100ms linear, box-shadow 100ms linear; }
+  button:active { background: var(--fg); color: var(--bg); transform: translate(5px, 5px); box-shadow: var(--sh-0); }
+  @media (prefers-reduced-motion: reduce) { button { transition: none; } button:active { transform: none; } }
+
+  /* Persistent until the cause is gone. Ink, not red: red is an aspect. */
+  .banner { display: none; padding: 8px 16px; border-bottom: 3px solid var(--fg); background: var(--panel); }
+  .banner.on { display: block; }
+
+  /* The panel two thirds, the rack one third (plan § Design). minmax(0, …)
+     so a long rack row never widens its column, and the canvas row never
+     grows to its own pixel height and loops the ResizeObserver (twr). */
+  main { flex: 1; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); min-height: 0; position: relative; }
+  #map { width: 100%; height: 100%; display: block; min-width: 0; min-height: 0; touch-action: none; cursor: crosshair; }
+  #map.dragging { cursor: grabbing; }
+  .attr { position: absolute; left: 12px; bottom: 8px; font-size: 12px; color: var(--dim); pointer-events: none; }
+  .rack { border-left: 1px solid var(--hair); background: var(--panel); overflow-y: auto; padding: 12px;
+          display: flex; flex-direction: column; gap: 12px; }
+  .bay { border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); }
+  .bay h2 { margin: 0; padding: 10px 12px; display: flex; justify-content: space-between; }
+  .bay .row, .bay .none { border-top: 1px solid var(--hair); padding: 10px 12px; }
+  .bay .none { color: var(--dim); }
+  .bay .num { font: 700 14px var(--mono); }
+  .bay .sub { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand">Cabin</span>
+    <span><span class="label">Station</span> NDLS</span>
+    <span><span class="label">Clock</span> <span class="val" id="clock">00:00</span></span>
+    <span class="grow"></span>
+    <span class="saved" id="saved">[Saved]</span>
+    <button id="theme" type="button">Light</button>
+  </header>
+  <div class="banner" id="banner" role="alert"></div>
+  <main>
+    <canvas id="map" aria-label="Track panel of New Delhi station: drag to pan, wheel to zoom"></canvas>
+    <aside class="rack" aria-label="Trains">
+      <section class="bay" data-bay="due">
+        <h2><span class="label">Due</span><span class="label val">1</span></h2>
+        <div class="row"><div class="num">TEST</div>
+          <div class="sub">Skeleton train, portal N1 to P1. Not traffic: the timetable arrives with the controls.</div></div>
+      </section>
+      <section class="bay" data-bay="platform">
+        <h2><span class="label">At platform</span><span class="label val">0</span></h2>
+        <div class="none">No train.</div>
+      </section>
+      <section class="bay" data-bay="depart">
+        <h2><span class="label">Ready to depart</span><span class="label val">0</span></h2>
+        <div class="none">No train.</div>
+      </section>
+    </aside>
+    <div class="attr" id="attr"></div>
+  </main>
+
+<script>
+"use strict";
+window.CABIN = (() => {
+  // ---- Storage -----------------------------------------------------------
+  // Chrome gives every file:// page one shared localStorage origin, so the
+  // namespaced key keeps cabin from colliding with other local tools.
+  const STORE_KEY = "cabin.v1";
+  const SCHEMA_VERSION = 1;
+  const systemTheme = () => matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  const DEFAULTS = () => ({ v: SCHEMA_VERSION, settings: { theme: systemTheme() }, bests: {} });
+  // Each entry upgrades from version n to n + 1. None yet.
+  const MIGRATIONS = {};
+  const plain = o => typeof o === "object" && o !== null && !Array.isArray(o);
+  const el = id => document.getElementById(id);
+
+  const banner = el("banner");
+  const problems = new Map();
+  // Built as text nodes: an error message or a corrupt saved value must
+  // never inject markup into the page.
+  function report(key, title, detail = "") {
+    problems.set(key, [title, detail]);
+    banner.replaceChildren();
+    for (const [t, d] of problems.values()) {
+      const line = document.createElement("div");
+      const b = document.createElement("b");
+      b.textContent = t;
+      line.append(b, d ? " " + d : "");
+      banner.append(line);
+    }
+    banner.classList.add("on");
+  }
+
+  // `writable` stays false when stored data could not be read: overwriting
+  // it with defaults would destroy whatever is there.
+  let state = DEFAULTS();
+  let writable = true;
+  function load() {
+    let raw;
+    try { raw = localStorage.getItem(STORE_KEY); }
+    catch (e) { writable = false; report("store", "Storage unavailable.", "Settings will not be kept this session."); return; }
+    if (raw === null) return;
+    try {
+      let s = JSON.parse(raw);
+      if (!plain(s) || !Number.isInteger(s.v)) throw new Error("no version");
+      if (s.v > SCHEMA_VERSION) throw new Error(`saved by a newer cabin (v${s.v})`);
+      while (s.v < SCHEMA_VERSION) s = MIGRATIONS[s.v](s);
+      const theme = plain(s.settings) && (s.settings.theme === "light" || s.settings.theme === "dark") ? s.settings.theme : systemTheme();
+      state = { ...DEFAULTS(), ...s, settings: { ...s.settings, theme }, bests: plain(s.bests) ? s.bests : {} };
+    } catch (e) {
+      writable = false;
+      report("store", "Saved settings could not be read.", `${e.message}. Defaults are in use; the saved copy under ${STORE_KEY} is left untouched.`);
+    }
+  }
+  const savedEl = el("saved");
+  let savedTimer = 0;
+  function save() {
+    if (!writable) return;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+    catch (e) { report("store", "Could not save settings.", "Storage is full or blocked."); return; }
+    savedEl.classList.add("on");
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => savedEl.classList.remove("on"), 1200);
+  }
+
+  // ---- Theme -------------------------------------------------------------
+  const themeBtn = el("theme");
+  const colours = {};
+  // Canvas colours come from the same custom properties as the DOM, read
+  // once per theme change rather than once per frame.
+  function applyTheme() {
+    document.documentElement.dataset.theme = state.settings.theme;
+    themeBtn.textContent = state.settings.theme === "dark" ? "Light" : "Dark";
+    const cs = getComputedStyle(document.documentElement);
+    for (const k of ["bg", "fg", "dim", "line"]) colours[k] = cs.getPropertyValue("--" + k).trim();
+  }
+  // A mouse press leaves no focus on the button, so a later key is not a
+  // second press.
+  themeBtn.addEventListener("pointerdown", e => e.preventDefault());
+  themeBtn.addEventListener("click", () => {
+    state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
+    applyTheme();
+    save();
+  });
+
+  // ---- Canvas ------------------------------------------------------------
+  const canvas = el("map");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+  let app = null;
+  let dpr = 1;
+  function fit() {
+    dpr = window.devicePixelRatio || 1;
+    const r = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(r.width * dpr));
+    canvas.height = Math.max(1, Math.round(r.height * dpr));
+    // Setting the size clears the canvas after this frame's draw: draw again
+    // now, with no time passing, or the frame paints blank.
+    if (app) draw(0);
+  }
+  new ResizeObserver(fit).observe(canvas);
+
+  // False once the App has thrown; the loop stops and the banner says why.
+  function draw(dt) {
+    try { app.frame(dt, dpr, reduce.matches, colours.bg, colours.fg, colours.dim, colours.line); return true; }
+    catch (e) { report("frame", "The panel stopped.", String(e && e.message || e)); return false; }
+  }
+
+  // ---- Input -------------------------------------------------------------
+  // Under this many CSS px of travel a press is a click, not a drag. Clicks
+  // mean nothing yet; B6 gives them signals.
+  const CLICK_SLOP_PX = 4;
+  function wireInput() {
+    const local = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    let press = null;
+    // The first pointer down owns the gesture; a second finger is ignored.
+    canvas.addEventListener("pointerdown", e => {
+      if (press) return;
+      const [x, y] = local(e);
+      press = { x, y, lx: x, ly: y, drag: false, id: e.pointerId };
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener("pointermove", e => {
+      if (!press || e.pointerId !== press.id) return;
+      const [x, y] = local(e);
+      if (!press.drag && Math.hypot(x - press.x, y - press.y) > CLICK_SLOP_PX) {
+        press.drag = true;
+        canvas.classList.add("dragging");
+      }
+      if (press.drag) app.pan(x - press.lx, y - press.ly);
+      press.lx = x; press.ly = y;
+    });
+    const release = e => {
+      if (!press || e.pointerId !== press.id) return;
+      canvas.classList.remove("dragging");
+      app.release();
+      press = null;
+    };
+    canvas.addEventListener("pointerup", release);
+    canvas.addEventListener("pointercancel", release);
+    canvas.addEventListener("contextmenu", e => e.preventDefault());
+    canvas.addEventListener("wheel", e => {
+      e.preventDefault();
+      const [x, y] = local(e);
+      // deltaMode 1 is lines (Firefox); one line is about 16 px.
+      app.wheel(x, y, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY);
+    }, { passive: false });
+  }
+
+  const pad = n => String(n).padStart(2, "0");
+  function boot(wasmBase64) {
+    load();
+    applyTheme();
+    fit();
+    try {
+      const bytes = Uint8Array.from(atob(wasmBase64), c => c.charCodeAt(0));
+      wasm_bindgen.initSync({ module: bytes });
+      app = new wasm_bindgen.App("map");
+    } catch (e) {
+      report("boot", "The panel failed to start.", String(e && e.message || e));
+      return;
+    }
+    el("attr").textContent = `© OpenStreetMap contributors, extract of ${app.osm_base().slice(0, 10)} · `
+      + `not to scale across the tracks (spacing ×${app.stretch()}) · not for real-world use`;
+    wireInput();
+    let last = performance.now();
+    let shown = -1;
+    function tick(now) {
+      const dt = now - last;
+      last = now;
+      // A pixel-ratio change at the same CSS size fires no ResizeObserver.
+      if ((window.devicePixelRatio || 1) !== dpr) fit();
+      if (!draw(dt)) return;
+      const s = Math.floor(app.real_s());
+      if (s !== shown) { shown = s; el("clock").textContent = `${pad(Math.floor(s / 60))}:${pad(s % 60)}`; }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  window.addEventListener("error", e => report("js", "Script error.", e.message));
+  // `app` and `state` are exposed for the verification script's read-only hooks.
+  return { boot, get state() { return state; }, get app() { return app; }, STORE_KEY, SCHEMA_VERSION };
+})();
+</script>
+<!--BUNDLE-->
+</body>
+</html>

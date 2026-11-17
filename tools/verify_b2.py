@@ -1,0 +1,201 @@
+"""B2 verification: the skeleton page, driven with real mouse input.
+
+Checks the B2 "done" line of PLAN-cabin.md: zero console errors on a fresh
+and a seeded profile, both themes, 1920 px, no network request. Plus what
+the skeleton must do: draw the yard, pan 1:1, rubber-band past an edge and
+spring back, zoom about the cursor, run the skeleton train, save the theme.
+
+Read-only hooks on CABIN.app give screen positions; every action is a real
+click, drag or wheel. Usage: python3 tools/verify_b2.py <scratch folder>
+Exits 0 only if every check passed.
+"""
+from __future__ import annotations
+
+import json
+import pathlib
+import sys
+
+from playwright.sync_api import sync_playwright
+
+PAGE_FILE = pathlib.Path(__file__).resolve().parents[1] / "dist" / "index.html"
+PAGE = PAGE_FILE.as_uri()
+OUT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+OUT.mkdir(parents=True, exist_ok=True)
+VIEW = {"width": 1920, "height": 1080}
+results: list[tuple[bool, str]] = []
+
+
+def check(ok: bool, what: str) -> None:
+    results.append((bool(ok), what))
+    print(("PASS " if ok else "FAIL ") + what, flush=True)
+
+
+def app(pg, expr: str):
+    return pg.evaluate(f"(() => {{ const a = CABIN.app; return {expr}; }})()")
+
+
+def frames(pg, n: int = 2) -> None:
+    pg.evaluate(f"new Promise(r => {{ let k = {n}; const f = () => --k ? requestAnimationFrame(f) : r(); requestAnimationFrame(f); }})")
+
+
+def open_page(b, scheme="dark", reduce=False, seed: str | None = None):
+    """A fresh context is a fresh profile. `seed` is written to cabin.v1
+    before the page's first script runs."""
+    ctx = b.new_context(viewport=VIEW, color_scheme=scheme, reduced_motion="reduce" if reduce else "no-preference")
+    if seed is not None:
+        ctx.add_init_script(f"if (!sessionStorage.getItem('seeded')) {{ localStorage.setItem('cabin.v1', {json.dumps(seed)}); sessionStorage.setItem('seeded', '1'); }}")
+    pg = ctx.new_page()
+    errs: list[str] = []
+    reqs: list[str] = []
+    pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))
+    pg.on("console", lambda m: m.type == "error" and errs.append(m.text))
+    pg.on("request", lambda r: reqs.append(r.url))
+    pg.goto(PAGE)
+    pg.wait_for_timeout(800)
+    return ctx, pg, errs, reqs
+
+
+def canvas_box(pg):
+    b = pg.locator("#map").bounding_box()
+    return b["x"], b["y"], b["width"], b["height"]
+
+
+def inked(pg) -> float:
+    """Share of canvas pixels that differ from the background colour."""
+    return pg.evaluate("""(() => {
+      const c = document.getElementById('map'), g = c.getContext('2d');
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      const r = d[0], gg = d[1], b = d[2]; let n = 0;
+      for (let i = 0; i < d.length; i += 16) if (Math.abs(d[i]-r) + Math.abs(d[i+1]-gg) + Math.abs(d[i+2]-b) > 30) n++;
+      return n / (d.length / 16);
+    })()""")
+
+
+def corner_rgb(pg):
+    return pg.evaluate("Array.from(document.getElementById('map').getContext('2d').getImageData(2, 2, 1, 1).data.slice(0, 3))")
+
+
+html = PAGE_FILE.read_text()
+check("alert(" not in html and "confirm(" not in html, "built page holds no alert() or confirm()")
+
+with sync_playwright() as pw:
+    b = pw.chromium.launch()
+
+    # ---- Fresh profile, dark ------------------------------------------------
+    ctx, pg, errs, reqs = open_page(b, "dark")
+    ox, oy, cw, ch = canvas_box(pg)
+    check(cw >= 0.6 * VIEW["width"], f"panel takes two thirds at 1920 px: {cw:.0f} px wide")
+    check(pg.evaluate("document.documentElement.dataset.theme") == "dark", "fresh profile follows the system: dark")
+    check(not pg.is_visible("#banner"), "no banner on a fresh profile")
+    attr = pg.text_content("#attr")
+    check("2026-11-15" in attr and "not to scale" in attr, f"attribution names the extract date and the stretch: {attr!r}")
+    check(app(pg, "a.platform_count()") == 16 and app(pg, "a.edge_count()") == 323, "yard has 16 platforms and 323 edges")
+    on = [app(pg, f"a.platform_screen({i})") for i in range(16)]
+    check(all(0 <= x <= cw and 0 <= y <= ch for x, y in on), "every platform is on screen at the default view")
+    share = inked(pg)
+    check(share > 0.01, f"the yard is drawn: {share:.1%} of canvas pixels inked")
+    pg.screenshot(path=str(OUT / "b2_dark_1920.png"))
+
+    # Skeleton train runs; clock runs.
+    h0, t0 = app(pg, "a.train_head_m()"), pg.text_content("#clock")
+    p0 = app(pg, "a.train_screen()")
+    pg.wait_for_timeout(1200)
+    h1, p1 = app(pg, "a.train_head_m()"), app(pg, "a.train_screen()")
+    check(10 < h1 - h0 < 25, f"skeleton train moves at about 13.9 m/s: {h1 - h0:.1f} m in 1.2 s")
+    check(p0 != p1, f"its drawn head moves: {p0[0]:.0f},{p0[1]:.0f} -> {p1[0]:.0f},{p1[1]:.0f}")
+    pg.wait_for_timeout(1000)
+    check(pg.text_content("#clock") != t0, f"clock advances: {t0} -> {pg.text_content('#clock')}")
+
+    # Wheel zoom about the cursor: a platform's offset from the cursor
+    # scales by the zoom ratio.
+    ax, ay = app(pg, "a.platform_screen(0)")
+    mx, my = round(ax) + 37, round(ay) - 23
+    z0 = app(pg, "a.zoom()")
+    pg.mouse.move(ox + mx, oy + my)
+    for _ in range(6):
+        pg.mouse.wheel(0, -100)
+        pg.wait_for_timeout(30)
+    pg.wait_for_timeout(900)
+    z1 = app(pg, "a.zoom()")
+    bx, by = app(pg, "a.platform_screen(0)")
+    k = z1 / z0
+    ex, ey = mx + (ax - mx) * k, my + (ay - my) * k
+    check(z1 > 2.5 * z0, f"wheel zooms in: {z0:.3f} -> {z1:.3f} px/m")
+    check(abs(bx - ex) < 0.1 and abs(by - ey) < 0.1, f"zoom pivots on the cursor: platform at {bx:.2f},{by:.2f}, expected {ex:.2f},{ey:.2f}")
+
+    # Drag pans 1:1 inside the yard.
+    pg.mouse.move(ox + 600, oy + 500); pg.mouse.down(); pg.mouse.move(ox + 700, oy + 560, steps=6); pg.mouse.up()
+    frames(pg)
+    cx, cy = app(pg, "a.platform_screen(0)")
+    check(abs((cx - bx) - 100) < 0.5 and abs((cy - by) - 60) < 0.5, f"drag pans 1:1: moved {cx - bx:.1f},{cy - by:.1f} for 100,60")
+
+    # Past the left edge: the map gives way less than the pointer, then
+    # springs back inside on release.
+    u0, u1, v0, v1 = app(pg, "a.panel_bounds()")
+    pg.mouse.move(ox + 100, oy + 500); pg.mouse.down()
+    for step in range(1, 31):
+        pg.mouse.move(ox + 100 + step * 100, oy + 500)
+    frames(pg)
+    free = app(pg, "a.centre()")[0]
+    pulled = 3000 / app(pg, "a.zoom()")
+    check(free < u0 and (u0 - free) < 0.55 * pulled, f"past the edge it rubber-bands: centre {u0 - free:.0f} m past, pointer asked {pulled:.0f} m")
+    pg.mouse.up()
+    pg.wait_for_timeout(1200)
+    back = app(pg, "a.centre()")
+    check(u0 <= back[0] <= u1 and v0 <= back[1] <= v1, f"on release it springs back inside: centre u {back[0]:.1f} (edge {u0:.1f})")
+    check(not errs, f"no console errors, fresh profile: {errs}")
+
+    # Theme: a real click flips it, saves it, and the canvas redraws in it.
+    dark_bg = corner_rgb(pg)
+    pg.click("#theme")
+    frames(pg)
+    check(pg.evaluate("document.documentElement.dataset.theme") == "light", "theme button switches to light")
+    check(pg.is_visible("#saved"), "[SAVED] shows inline after the switch")
+    stored = json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))
+    check(stored == {"v": 1, "settings": {"theme": "light"}, "bests": {}}, f"cabin.v1 holds the schema and the theme: {stored}")
+    light_bg = corner_rgb(pg)
+    check(dark_bg == [0, 0, 0] and light_bg == [255, 255, 255], f"canvas redraws in the theme: {dark_bg} -> {light_bg}")
+    pg.wait_for_timeout(400)
+    pg.screenshot(path=str(OUT / "b2_light_1920.png"))
+    pg.reload()
+    pg.wait_for_timeout(800)
+    check(pg.evaluate("document.documentElement.dataset.theme") == "light", "light survives a reload on a dark system")
+    check(not errs, f"no console errors after theme switch and reload: {errs}")
+    check(all(u.startswith("file://") for u in reqs), f"no network request: {len(reqs)} requests, all file://")
+    ctx.close()
+
+    # ---- Seeded profiles ------------------------------------------------------
+    ctx, pg, errs, reqs = open_page(b, "dark", seed=json.dumps({"v": 1, "settings": {"theme": "light"}, "bests": {}}))
+    check(pg.evaluate("document.documentElement.dataset.theme") == "light", "seeded light profile opens light")
+    check(not pg.is_visible("#banner") and not errs, f"seeded profile: no banner, no console errors {errs}")
+    check(all(u.startswith("file://") for u in reqs), "seeded profile: no network request")
+    ctx.close()
+
+    for bad, why in (("not json", "not JSON"), (json.dumps({"v": 99}), "a future version")):
+        ctx, pg, errs, reqs = open_page(b, "dark", seed=bad)
+        text = pg.text_content("#banner") if pg.is_visible("#banner") else ""
+        check("could not be read" in text, f"store holding {why}: banner says so: {text!r}")
+        h0 = app(pg, "a.train_head_m()")
+        pg.wait_for_timeout(500)
+        check(app(pg, "a.train_head_m()") > h0, f"store holding {why}: the page still runs")
+        pg.click("#theme")
+        check(pg.evaluate("localStorage.getItem('cabin.v1')") == bad, f"store holding {why}: the saved copy is left untouched")
+        check(not errs, f"store holding {why}: no console errors {errs}")
+        ctx.close()
+
+    # ---- Reduced motion: zoom jumps -------------------------------------------
+    ctx, pg, errs, reqs = open_page(b, "dark", reduce=True)
+    ox, oy, cw, ch = canvas_box(pg)
+    z0 = app(pg, "a.zoom()")
+    pg.mouse.move(ox + cw / 2, oy + ch / 2)
+    pg.mouse.wheel(0, -100)
+    frames(pg, 2)
+    z1 = app(pg, "a.zoom()")
+    check(abs(z1 / z0 - 1.2214) < 0.001, f"reduced motion: one notch zooms 1.22x on the next frame: {z1 / z0:.4f}")
+    check(not errs, f"reduced motion: no console errors {errs}")
+    ctx.close()
+    b.close()
+
+failed = [w for ok, w in results if not ok]
+print(f"\n{len(results) - len(failed)}/{len(results)} passed")
+sys.exit(1 if failed else 0)

@@ -1,0 +1,1774 @@
+# NDLS traffic profile for cabin, read by the game's `Schedule` (slice B7).
+#
+# Every value is `{ v = ..., src = "<row ids>", tag = "..." }`. `src` names rows
+# in research/traffic-volume.md (V-), research/traffic-pool.md (P-) and
+# research/signalling-search.md (S-); an empty `src` means no source was found.
+# `tag` is one of: primary, secondary, derived, assumed, unconfirmed. A test in
+# cabin-osm fails when a value lacks either key, so a number cannot enter this
+# file without saying where it came from or that it is a guess.
+#
+# Read this as pace, never as a count: the only per-day source is one paper's
+# 2016 survey of NDLS's berthing chart (V-01, V-02), and the game must print its
+# traffic as "about". One knob scales all of it.
+#
+# Written 2026-11-15 from the ledgers; the pool rows are copied from P-001..P-139.
+
+[meta]
+written = { v = "2026-11-15", src = "", tag = "derived" }
+
+
+[volume]
+# Busy day, 2016 (87 originating, 87 terminating, 103 through; the paper's parts sum to 277, the hourly chart to 275).
+trains_per_day_busy = { v = 275, src = "V-02, V-03, V-12", tag = "assumed" }
+# Older figure, no year; used as the quiet-day scale only.
+trains_per_day_quiet = { v = 245, src = "V-04", tag = "assumed" }
+# Trains per hour, hours 0 to 23, sum 275. Labels read from a chart image. The datameet 2016 count peaks at 13:00 instead (V-19).
+hourly_weights = { v = [3, 2, 0, 2, 5, 9, 20, 16, 14, 22, 19, 10, 13, 14, 9, 7, 14, 21, 18, 12, 10, 12, 10, 13], src = "V-12", tag = "secondary" }
+# Arrivals from the north side (Sadar Bazar), the rest from the south and east (Shivaji Bridge). One 2016 timetable counted as daily.
+north_share = { v = 0.333, src = "V-22, V-23, V-24", tag = "assumed" }
+
+[mix]  # share of trains by class; the three sum to 1.0
+emu_local = { v = 0.28, src = "V-27", tag = "assumed" }
+# Superfast, Mail, Express, Sampark Kranti, Garib Rath.
+express = { v = 0.41, src = "V-27", tag = "assumed" }
+# Rajdhani, Shatabdi, Duronto. Reading the leftover 31% as premium is a construction; datameet counts 28.8% for the same three.
+premium = { v = 0.31, src = "V-27, V-28, V-29", tag = "assumed" }
+# Split of the premium 31% in the 32:25:10 ratio of V-27 to V-29.
+rajdhani = { v = 0.148, src = "V-27, V-28, V-29", tag = "assumed" }
+shatabdi = { v = 0.116, src = "V-27, V-28, V-29", tag = "assumed" }
+duronto = { v = 0.046, src = "V-27, V-28, V-29", tag = "assumed" }
+# Zero until a current source is found; take its share out of premium when added.
+vande_bharat = { v = 0.0, src = "V-36", tag = "assumed" }
+
+[dwell_s]  # [low, high] seconds at a platform
+# n = 5 trains: thin.
+through_express = { v = [900, 1500], src = "P-181", tag = "secondary" }
+# n = 6, 2017-2021 records.
+through_passenger = { v = [120, 600], src = "P-182", tag = "assumed" }
+# n = 8, 2017-2021 records.
+through_emu = { v = [120, 600], src = "P-183", tag = "assumed" }
+# No source gives platform dwell for a terminating train; the sourced figures are rake gaps (P-197, P-186) that bound the rake, not the platform.
+terminating = { v = [600, 1200], src = "", tag = "assumed" }
+
+[length_m]  # rake length, excluding the locomotive
+# 24 m a car; the 16-car count is primary (PIB).
+vande_bharat_16 = { v = 384, src = "P-158, P-159, P-160", tag = "secondary" }
+vande_bharat_20 = { v = 480, src = "P-158, P-160", tag = "secondary" }
+# 22 LHB vehicles at 24.0 m.
+rajdhani = { v = 528, src = "P-156, P-161, P-162, P-163", tag = "assumed" }
+# 16 coaches; the pool spans 11 to 18.
+shatabdi = { v = 384, src = "P-156, P-164", tag = "assumed" }
+# 19 vehicles, median of 18 to 21.
+duronto = { v = 456, src = "P-156, P-166", tag = "assumed" }
+# Midpoint of 490 to 530 (22 vehicles, ICF 22.3 m to LHB 24.0 m).
+superfast = { v = 510, src = "P-171, P-172, P-176", tag = "assumed" }
+mail_express = { v = 510, src = "P-171, P-172, P-176", tag = "assumed" }
+humsafar = { v = 480, src = "P-168", tag = "assumed" }
+garib_rath = { v = 432, src = "P-170", tag = "assumed" }
+# The count conflicts with Wikipedia's other Tejas.
+tejas = { v = 336, src = "P-169", tag = "assumed" }
+jan_shatabdi = { v = 336, src = "P-165", tag = "assumed" }
+# 12 coaches (secondary) at an assumed 22 m a car (no source).
+emu = { v = 264, src = "P-175, P-179", tag = "assumed" }
+# 8 to 9 coaches at an assumed 22 m, midpoint.
+memu = { v = 187, src = "P-174, P-179", tag = "assumed" }
+# No source: read as a MEMU-sized rake.
+passenger = { v = 187, src = "", tag = "assumed" }
+# WAP-7 and WAG-9; WAP-5 is 18.2 m. Add to every loco-hauled type; which loco hauls which train is unsourced (P-208).
+loco = { v = 20.6, src = "P-205, P-206", tag = "secondary" }
+
+[platforms]
+# Platform 1 on the Paharganj side, 16 on the Ajmeri Gate side (S-02).
+count = { v = 16, src = "S-01", tag = "secondary" }
+
+# The draw pool: 139 real trains at NDLS. `pf` is a per-train platform from the
+# source (P-201); no allotment source exists (P-204), so it is a weighted default.
+# `src` is the P- row; `tag` is that row's tag. The 28 passenger and EMU/MEMU
+# trains carry 2017-2021 records and are `unconfirmed`.
+
+[[train]]
+number = "12301"
+name = "Howrah - New Delhi Rajdhani Express (Via Gaya)"
+type = "Rajdhani"
+from = "HWH"
+to = "NDLS"
+stops = "terminates"
+arr = "10:05"
+pf = "14"
+src = "P-001"
+tag = "secondary"
+
+[[train]]
+number = "12302"
+name = "New Delhi - Howrah Rajdhani Express (Via Gaya)"
+type = "Rajdhani"
+from = "NDLS"
+to = "HWH"
+stops = "starts"
+dep = "16:50"
+pf = "14"
+src = "P-002"
+tag = "secondary"
+
+[[train]]
+number = "12305"
+name = "Howrah - New Delhi Rajdhani Express (Via Patna)"
+type = "Rajdhani"
+from = "HWH"
+to = "NDLS"
+stops = "terminates"
+arr = "10:05"
+pf = "14"
+src = "P-003"
+tag = "secondary"
+
+[[train]]
+number = "12306"
+name = "New Delhi - Howrah Rajdhani Express (Via Patna)"
+type = "Rajdhani"
+from = "NDLS"
+to = "HWH"
+stops = "starts"
+dep = "16:50"
+pf = "14"
+src = "P-004"
+tag = "secondary"
+
+[[train]]
+number = "12309"
+name = "Rajendra Nagar T - New Delhi Tejas Rajdhani Express"
+type = "Rajdhani"
+from = "RJPB"
+to = "NDLS"
+stops = "terminates"
+arr = "07:55"
+pf = "7"
+src = "P-005"
+tag = "secondary"
+
+[[train]]
+number = "12310"
+name = "New Delhi - Rajendra Nagar T Tejas Rajdhani Express"
+type = "Rajdhani"
+from = "NDLS"
+to = "RJPB"
+stops = "starts"
+dep = "17:10"
+pf = "9"
+src = "P-006"
+tag = "secondary"
+
+[[train]]
+number = "12313"
+name = "Sealdah - New Delhi Rajdhani Express"
+type = "Rajdhani"
+from = "SDAH"
+to = "NDLS"
+stops = "terminates"
+arr = "10:50"
+pf = "13"
+src = "P-007"
+tag = "secondary"
+
+[[train]]
+number = "12314"
+name = "New Delhi - Sealdah Rajdhani Express"
+type = "Rajdhani"
+from = "NDLS"
+to = "SDAH"
+stops = "starts"
+dep = "16:30"
+pf = "13"
+src = "P-008"
+tag = "secondary"
+
+[[train]]
+number = "12423"
+name = "Dibrugarh - New Delhi Rajdhani Express"
+type = "Rajdhani"
+from = "DBRG"
+to = "NDLS"
+stops = "terminates"
+arr = "10:30"
+pf = "15"
+src = "P-009"
+tag = "secondary"
+
+[[train]]
+number = "12424"
+name = "New Delhi - Dibrugarh Rajdhani Express"
+type = "Rajdhani"
+from = "NDLS"
+to = "DBRG"
+stops = "starts"
+dep = "16:20"
+pf = "15"
+src = "P-010"
+tag = "secondary"
+
+[[train]]
+number = "12425"
+name = "New Delhi - Jammu Tawi Rajdhani Express"
+type = "Rajdhani"
+from = "NDLS"
+to = "JAT"
+stops = "starts"
+dep = "20:40"
+pf = "12"
+src = "P-011"
+tag = "secondary"
+
+[[train]]
+number = "12426"
+name = "Jammu Tawi - New Delhi Rajdhani Express"
+type = "Rajdhani"
+from = "JAT"
+to = "NDLS"
+stops = "terminates"
+arr = "05:55"
+pf = "15"
+src = "P-012"
+tag = "secondary"
+
+[[train]]
+number = "12441"
+name = "Bilaspur - New Delhi Rajdhani Express"
+type = "Rajdhani"
+from = "BSP"
+to = "NDLS"
+stops = "terminates"
+arr = "10:40"
+pf = "13"
+src = "P-013"
+tag = "secondary"
+
+[[train]]
+number = "12442"
+name = "New Delhi - Bilaspur Rajdhani Express"
+type = "Rajdhani"
+from = "NDLS"
+to = "BSP"
+stops = "starts"
+dep = "15:25"
+pf = "15"
+src = "P-014"
+tag = "secondary"
+
+[[train]]
+number = "12453"
+name = "Ranchi - New Delhi Rajdhani Express (via Chopan)"
+type = "Rajdhani"
+from = "RNC"
+to = "NDLS"
+stops = "terminates"
+arr = "11:10"
+pf = "15"
+src = "P-015"
+tag = "secondary"
+
+[[train]]
+number = "12454"
+name = "New Delhi - Ranchi Rajdhani Express (via Chopan)"
+type = "Rajdhani"
+from = "NDLS"
+to = "RNC"
+stops = "starts"
+dep = "16:10"
+pf = "14"
+src = "P-016"
+tag = "secondary"
+
+[[train]]
+number = "12951"
+name = "Mumbai Central - New Delhi Rajdhani Express"
+type = "Rajdhani"
+from = "MMCT"
+to = "NDLS"
+stops = "terminates"
+arr = "08:32"
+pf = "3"
+src = "P-017"
+tag = "secondary"
+
+[[train]]
+number = "12952"
+name = "New Delhi - Mumbai Central Rajdhani Express"
+type = "Rajdhani"
+from = "NDLS"
+to = "MMCT"
+stops = "starts"
+dep = "16:55"
+pf = "3"
+src = "P-018"
+tag = "secondary"
+
+[[train]]
+number = "12957"
+name = "Swarna Jayanti Rajdhani Express"
+type = "Rajdhani"
+from = "SBIB"
+to = "NDLS"
+stops = "terminates"
+arr = "07:30"
+pf = "1"
+src = "P-019"
+tag = "secondary"
+
+[[train]]
+number = "12958"
+name = "Swarna Jayanti Rajdhani Express"
+type = "Rajdhani"
+from = "NDLS"
+to = "SBIB"
+stops = "starts"
+dep = "19:55"
+pf = "1"
+src = "P-020"
+tag = "secondary"
+
+[[train]]
+number = "20839"
+name = "Ranchi - New Delhi Rajdhani Express (via Bokaro Steel City)"
+type = "Rajdhani"
+from = "RNC"
+to = "NDLS"
+stops = "terminates"
+arr = "11:10"
+pf = "14"
+src = "P-021"
+tag = "secondary"
+
+[[train]]
+number = "20840"
+name = "New Delhi - Ranchi Rajdhani Express (Via Bokaro Steel City)"
+type = "Rajdhani"
+from = "NDLS"
+to = "RNC"
+stops = "starts"
+dep = "16:10"
+pf = "14"
+src = "P-022"
+tag = "secondary"
+
+[[train]]
+number = "22811"
+name = "Bhubaneswar - New Delhi Tejas Rajdhani Express (via Adra)"
+type = "Rajdhani"
+from = "BBS"
+to = "NDLS"
+stops = "terminates"
+arr = "09:55"
+pf = "11"
+src = "P-023"
+tag = "secondary"
+
+[[train]]
+number = "22812"
+name = "New Delhi - Bhubaneswar Tejas Rajdhani Express (via Adra)"
+type = "Rajdhani"
+from = "NDLS"
+to = "BBS"
+stops = "starts"
+dep = "17:00"
+pf = "11"
+src = "P-024"
+tag = "secondary"
+
+[[train]]
+number = "22823"
+name = "Bhubaneswar - New Delhi Tejas Rajdhani Express (via Tatanagar)"
+type = "Rajdhani"
+from = "BBS"
+to = "NDLS"
+stops = "terminates"
+arr = "09:55"
+pf = "11"
+src = "P-025"
+tag = "secondary"
+
+[[train]]
+number = "22824"
+name = "New Delhi - Bhubaneswar Tejas Rajdhani Express (Via Tatanagar)"
+type = "Rajdhani"
+from = "NDLS"
+to = "BBS"
+stops = "starts"
+dep = "17:00"
+pf = "11"
+src = "P-026"
+tag = "secondary"
+
+[[train]]
+number = "12001"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "RKMP"
+to = "NDLS"
+stops = "terminates"
+arr = "23:50"
+pf = "1"
+src = "P-027"
+tag = "secondary"
+
+[[train]]
+number = "12002"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "RKMP"
+stops = "starts"
+dep = "06:00"
+pf = "1"
+src = "P-028"
+tag = "secondary"
+
+[[train]]
+number = "12003"
+name = "Lucknow Jn - New Delhi Swarn Shatabdi Express"
+type = "Shatabdi"
+from = "LJN"
+to = "NDLS"
+stops = "terminates"
+arr = "22:25"
+pf = "8"
+src = "P-029"
+tag = "secondary"
+
+[[train]]
+number = "12004"
+name = "New Delhi - Lucknow Jn. Swarn Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "LJN"
+stops = "starts"
+dep = "06:10"
+pf = "9"
+src = "P-030"
+tag = "secondary"
+
+[[train]]
+number = "12005"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "KLK"
+stops = "starts"
+dep = "17:15"
+pf = "1"
+src = "P-031"
+tag = "secondary"
+
+[[train]]
+number = "12006"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "KLK"
+to = "NDLS"
+stops = "terminates"
+arr = "10:15"
+pf = "1"
+src = "P-032"
+tag = "secondary"
+
+[[train]]
+number = "12011"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "KLK"
+stops = "starts"
+dep = "07:40"
+pf = "2"
+src = "P-033"
+tag = "secondary"
+
+[[train]]
+number = "12012"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "KLK"
+to = "NDLS"
+stops = "terminates"
+arr = "21:50"
+pf = "1"
+src = "P-034"
+tag = "secondary"
+
+[[train]]
+number = "12013"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "ASR"
+stops = "starts"
+dep = "16:30"
+pf = "1"
+src = "P-035"
+tag = "secondary"
+
+[[train]]
+number = "12014"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "ASR"
+to = "NDLS"
+stops = "terminates"
+arr = "11:02"
+pf = "1"
+src = "P-036"
+tag = "secondary"
+
+[[train]]
+number = "12015"
+name = "New Delhi - Daurai (Ajmer) Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "DOZ"
+stops = "starts"
+dep = "06:10"
+pf = "10"
+src = "P-037"
+tag = "secondary"
+
+[[train]]
+number = "12016"
+name = "Daurai (Ajmer) - New Delhi Shatabdi Express"
+type = "Shatabdi"
+from = "DOZ"
+to = "NDLS"
+stops = "terminates"
+arr = "22:30"
+pf = "4"
+src = "P-038"
+tag = "secondary"
+
+[[train]]
+number = "12017"
+name = "New Delhi - Dehradun Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "DDN"
+stops = "starts"
+dep = "06:45"
+pf = "16"
+src = "P-039"
+tag = "secondary"
+
+[[train]]
+number = "12018"
+name = "Dehradun - New Delhi Shatabdi Express"
+type = "Shatabdi"
+from = "DDN"
+to = "NDLS"
+stops = "terminates"
+arr = "22:50"
+pf = "11"
+src = "P-040"
+tag = "secondary"
+
+[[train]]
+number = "12029"
+name = "Swarna Jayanti Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "ASR"
+stops = "starts"
+dep = "07:20"
+pf = "1"
+src = "P-041"
+tag = "secondary"
+
+[[train]]
+number = "12030"
+name = "Swarna Jayanti Shatabdi Express"
+type = "Shatabdi"
+from = "ASR"
+to = "NDLS"
+stops = "terminates"
+arr = "22:50"
+pf = "3"
+src = "P-042"
+tag = "secondary"
+
+[[train]]
+number = "12031"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "ASR"
+stops = "starts"
+dep = "07:20"
+pf = "1"
+src = "P-043"
+tag = "secondary"
+
+[[train]]
+number = "12032"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "ASR"
+to = "NDLS"
+stops = "terminates"
+arr = "22:50"
+pf = "1"
+src = "P-044"
+tag = "secondary"
+
+[[train]]
+number = "12033"
+name = "Kanpur Central - New Delhi Shatabdi Express"
+type = "Shatabdi"
+from = "CNB"
+to = "NDLS"
+stops = "terminates"
+arr = "11:20"
+pf = "2"
+src = "P-045"
+tag = "secondary"
+
+[[train]]
+number = "12034"
+name = "New Delhi - Kanpur Central Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "CNB"
+stops = "starts"
+dep = "15:40"
+pf = "10"
+src = "P-046"
+tag = "secondary"
+
+[[train]]
+number = "12039"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "KGM"
+to = "NDLS"
+stops = "terminates"
+arr = "20:55"
+pf = "2"
+src = "P-047"
+tag = "secondary"
+
+[[train]]
+number = "12040"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "KGM"
+stops = "starts"
+dep = "06:20"
+pf = "2"
+src = "P-048"
+tag = "secondary"
+
+[[train]]
+number = "12045"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "NDLS"
+to = "CDG"
+stops = "starts"
+dep = "19:15"
+pf = "2"
+src = "P-049"
+tag = "secondary"
+
+[[train]]
+number = "12046"
+name = "Shatabdi Express"
+type = "Shatabdi"
+from = "CDG"
+to = "NDLS"
+stops = "terminates"
+arr = "15:20"
+pf = "2"
+src = "P-050"
+tag = "secondary"
+
+[[train]]
+number = "12055"
+name = "Jan Shatabdi Express"
+type = "Jan Shatabdi"
+from = "NDLS"
+to = "DDN"
+stops = "starts"
+dep = "15:20"
+pf = "9"
+src = "P-051"
+tag = "secondary"
+
+[[train]]
+number = "12056"
+name = "Jan Shatabdi Express"
+type = "Jan Shatabdi"
+from = "DDN"
+to = "NDLS"
+stops = "terminates"
+arr = "11:05"
+pf = "10"
+src = "P-052"
+tag = "secondary"
+
+[[train]]
+number = "12057"
+name = "Jan Shatabdi Express"
+type = "Jan Shatabdi"
+from = "NDLS"
+to = "DLPC"
+stops = "starts"
+dep = "14:35"
+pf = "10"
+src = "P-053"
+tag = "secondary"
+
+[[train]]
+number = "12058"
+name = "Jan Shatabdi Express"
+type = "Jan Shatabdi"
+from = "DLPC"
+to = "NDLS"
+stops = "terminates"
+arr = "11:45"
+pf = "9"
+src = "P-054"
+tag = "secondary"
+
+[[train]]
+number = "12259"
+name = "Sealdah - Bikaner AC Duronto Express"
+type = "Duronto"
+from = "SDAH"
+to = "BKN"
+stops = "through"
+arr = "11:00"
+dep = "11:15"
+pf = "9"
+src = "P-055"
+tag = "secondary"
+
+[[train]]
+number = "12260"
+name = "Bikaner - Sealdah AC Duronto Express"
+type = "Duronto"
+from = "BKN"
+to = "SDAH"
+stops = "through"
+arr = "19:30"
+dep = "19:45"
+pf = "13"
+src = "P-056"
+tag = "secondary"
+
+[[train]]
+number = "12273"
+name = "Howrah - New Delhi Duronto Express"
+type = "Duronto"
+from = "HWH"
+to = "NDLS"
+stops = "terminates"
+arr = "06:55"
+pf = "8"
+src = "P-057"
+tag = "secondary"
+
+[[train]]
+number = "12274"
+name = "New Delhi - Howrah Duronto Express"
+type = "Duronto"
+from = "NDLS"
+to = "HWH"
+stops = "starts"
+dep = "12:35"
+pf = "5"
+src = "P-058"
+tag = "secondary"
+
+[[train]]
+number = "12281"
+name = "Bhubaneswar - New Delhi Duronto Express"
+type = "Duronto"
+from = "BBS"
+to = "NDLS"
+stops = "terminates"
+arr = "06:55"
+pf = "8"
+src = "P-059"
+tag = "secondary"
+
+[[train]]
+number = "12282"
+name = "New Delhi - Bhubaneswar Duronto Express"
+type = "Duronto"
+from = "NDLS"
+to = "BBS"
+stops = "starts"
+dep = "12:35"
+pf = "5"
+src = "P-060"
+tag = "secondary"
+
+[[train]]
+number = "22435"
+name = "Vande Bharat Express"
+type = "Vande Bharat"
+from = "BSB"
+to = "NDLS"
+stops = "terminates"
+arr = "23:00"
+pf = "16"
+src = "P-061"
+tag = "secondary"
+
+[[train]]
+number = "22436"
+name = "Vande Bharat Express"
+type = "Vande Bharat"
+from = "NDLS"
+to = "BSB"
+stops = "starts"
+dep = "06:00"
+pf = "16"
+src = "P-062"
+tag = "secondary"
+
+[[train]]
+number = "22439"
+name = "Vande Bharat Express"
+type = "Vande Bharat"
+from = "NDLS"
+to = "SVDK"
+stops = "starts"
+dep = "06:00"
+pf = "14"
+src = "P-063"
+tag = "secondary"
+
+[[train]]
+number = "22440"
+name = "Vande Bharat Express"
+type = "Vande Bharat"
+from = "SVDK"
+to = "NDLS"
+stops = "terminates"
+arr = "23:10"
+pf = "14"
+src = "P-064"
+tag = "secondary"
+
+[[train]]
+number = "22447"
+name = "Vande Bharat Express"
+type = "Vande Bharat"
+from = "NDLS"
+to = "AADR"
+stops = "starts"
+dep = "05:50"
+pf = "11"
+src = "P-065"
+tag = "secondary"
+
+[[train]]
+number = "22448"
+name = "Vande Bharat Express"
+type = "Vande Bharat"
+from = "AADR"
+to = "NDLS"
+stops = "terminates"
+arr = "18:25"
+pf = "11"
+src = "P-066"
+tag = "secondary"
+
+[[train]]
+number = "12275"
+name = "Prayagraj - New Delhi Humsafar Express"
+type = "Humsafar"
+from = "PRYJ"
+to = "NDLS"
+stops = "terminates"
+arr = "06:35"
+pf = "5"
+src = "P-067"
+tag = "secondary"
+
+[[train]]
+number = "12276"
+name = "New Delhi - Prayagraj Humsafar Express"
+type = "Humsafar"
+from = "NDLS"
+to = "PRYJ"
+stops = "starts"
+dep = "23:05"
+pf = "9"
+src = "P-068"
+tag = "secondary"
+
+[[train]]
+number = "12349"
+name = "Godda - New Delhi Humsafar Express"
+type = "Humsafar"
+from = "GODA"
+to = "NDLS"
+stops = "terminates"
+arr = "12:50"
+pf = "13"
+src = "P-069"
+tag = "secondary"
+
+[[train]]
+number = "12350"
+name = "New Delhi - Godda Humsafar Express"
+type = "Humsafar"
+from = "NDLS"
+to = "GODA"
+stops = "starts"
+dep = "23:45"
+pf = "15"
+src = "P-070"
+tag = "secondary"
+
+[[train]]
+number = "82501"
+name = "Lucknow Jn. - New Delhi IRCTC Tejas Express"
+type = "Tejas"
+from = "LJN"
+to = "NDLS"
+stops = "terminates"
+arr = "12:35"
+pf = "11"
+src = "P-071"
+tag = "secondary"
+
+[[train]]
+number = "82502"
+name = "New Delhi - Lucknow Jn. IRCTC Tejas Express"
+type = "Tejas"
+from = "NDLS"
+to = "LJN"
+stops = "starts"
+dep = "15:30"
+pf = "11"
+src = "P-072"
+tag = "secondary"
+
+[[train]]
+number = "12877"
+name = "Ranchi - New Delhi Garib Rath Express"
+type = "Garib Rath"
+from = "RNC"
+to = "NDLS"
+stops = "terminates"
+arr = "11:10"
+pf = "15"
+src = "P-073"
+tag = "secondary"
+
+[[train]]
+number = "12878"
+name = "New Delhi - Ranchi Garib Rath Express"
+type = "Garib Rath"
+from = "NDLS"
+to = "RNC"
+stops = "starts"
+dep = "16:10"
+pf = "14"
+src = "P-074"
+tag = "secondary"
+
+[[train]]
+number = "12229"
+name = "Lucknow Mail"
+type = "Superfast"
+from = "LKO"
+to = "NDLS"
+stops = "terminates"
+arr = "07:00"
+pf = "16"
+src = "P-075"
+tag = "secondary"
+
+[[train]]
+number = "12304"
+name = "Poorva Express (Via Patna)"
+type = "Superfast"
+from = "SSB"
+to = "HWH"
+stops = "through"
+arr = "17:15"
+dep = "17:40"
+pf = "14"
+src = "P-076"
+tag = "secondary"
+
+[[train]]
+number = "12391"
+name = "Shramjeevi SF Express"
+type = "Superfast"
+from = "RGD"
+to = "NDLS"
+stops = "terminates"
+arr = "04:40"
+pf = "6"
+src = "P-077"
+tag = "secondary"
+
+[[train]]
+number = "12392"
+name = "Shramjeevi SF Express"
+type = "Superfast"
+from = "NDLS"
+to = "RGD"
+stops = "starts"
+dep = "13:10"
+pf = "8"
+src = "P-078"
+tag = "secondary"
+
+[[train]]
+number = "12397"
+name = "Mahabodhi SF Express"
+type = "Superfast"
+from = "GAYA"
+to = "NDLS"
+stops = "terminates"
+arr = "04:10"
+pf = "9"
+src = "P-079"
+tag = "secondary"
+
+[[train]]
+number = "12398"
+name = "Mahabodhi SF Express"
+type = "Superfast"
+from = "NDLS"
+to = "GAYA"
+stops = "starts"
+dep = "12:25"
+pf = "6"
+src = "P-080"
+tag = "secondary"
+
+[[train]]
+number = "12417"
+name = "Prayagraj Express"
+type = "Superfast"
+from = "PRYJ"
+to = "NDLS"
+stops = "terminates"
+arr = "07:15"
+pf = "14"
+src = "P-081"
+tag = "secondary"
+
+[[train]]
+number = "12418"
+name = "Prayagraj Express"
+type = "Superfast"
+from = "NDLS"
+to = "PRYJ"
+stops = "starts"
+dep = "22:15"
+pf = "14"
+src = "P-082"
+tag = "secondary"
+
+[[train]]
+number = "12419"
+name = "Gomti Express"
+type = "Superfast"
+from = "LKO"
+to = "NDLS"
+stops = "terminates"
+arr = "15:00"
+pf = "6"
+src = "P-083"
+tag = "secondary"
+
+[[train]]
+number = "12420"
+name = "Gomti Express"
+type = "Superfast"
+from = "NDLS"
+to = "LKO"
+stops = "starts"
+dep = "12:55"
+pf = "12"
+src = "P-084"
+tag = "secondary"
+
+[[train]]
+number = "12445"
+name = "Uttar Sampark Kranti Express"
+type = "Superfast"
+from = "NDLS"
+to = "SVDK"
+stops = "starts"
+dep = "20:50"
+pf = "15"
+src = "P-085"
+tag = "secondary"
+
+[[train]]
+number = "12446"
+name = "Uttar Sampark Kranti Express"
+type = "Superfast"
+from = "SVDK"
+to = "NDLS"
+stops = "terminates"
+arr = "06:55"
+pf = "15"
+src = "P-086"
+tag = "secondary"
+
+[[train]]
+number = "12497"
+name = "Shan-e-Punjab Express"
+type = "Superfast"
+from = "NDLS"
+to = "ASR"
+stops = "starts"
+dep = "06:40"
+pf = "14"
+src = "P-087"
+tag = "secondary"
+
+[[train]]
+number = "12498"
+name = "Shan-e-Punjab Express"
+type = "Superfast"
+from = "ASR"
+to = "NDLS"
+stops = "terminates"
+arr = "22:30"
+pf = "14"
+src = "P-088"
+tag = "secondary"
+
+[[train]]
+number = "12555"
+name = "Gorakhdham SF Express"
+type = "Superfast"
+from = "GKP"
+to = "BTI"
+stops = "through"
+arr = "05:15"
+dep = "05:30"
+pf = "5"
+src = "P-089"
+tag = "secondary"
+
+[[train]]
+number = "12559"
+name = "Shiv Ganga SF Express"
+type = "Superfast"
+from = "BNRS"
+to = "NDLS"
+stops = "terminates"
+arr = "08:30"
+pf = "12"
+src = "P-090"
+tag = "secondary"
+
+[[train]]
+number = "12560"
+name = "Shiv Ganga SF Express"
+type = "Superfast"
+from = "NDLS"
+to = "BNRS"
+stops = "starts"
+dep = "20:05"
+pf = "12"
+src = "P-091"
+tag = "secondary"
+
+[[train]]
+number = "12561"
+name = "Swatantrata Senani Express"
+type = "Superfast"
+from = "JYG"
+to = "NDLS"
+stops = "terminates"
+arr = "15:45"
+pf = "12"
+src = "P-092"
+tag = "secondary"
+
+[[train]]
+number = "12562"
+name = "Swatantrata Senani Express"
+type = "Superfast"
+from = "NDLS"
+to = "JYG"
+stops = "starts"
+dep = "21:15"
+pf = "13"
+src = "P-093"
+tag = "secondary"
+
+[[train]]
+number = "12565"
+name = "Bihar Sampark Kranti Express"
+type = "Superfast"
+from = "DBG"
+to = "NDLS"
+stops = "terminates"
+arr = "05:05"
+pf = "13"
+src = "P-094"
+tag = "secondary"
+
+[[train]]
+number = "12566"
+name = "Bihar Sampark Kranti Express"
+type = "Superfast"
+from = "NDLS"
+to = "DBG"
+stops = "starts"
+dep = "12:45"
+pf = "16"
+src = "P-095"
+tag = "secondary"
+
+[[train]]
+number = "12615"
+name = "Grand Trunk Express"
+type = "Superfast"
+from = "MAS"
+to = "NDLS"
+stops = "terminates"
+arr = "05:10"
+pf = "4"
+src = "P-096"
+tag = "secondary"
+
+[[train]]
+number = "12616"
+name = "Grand Trunk Express"
+type = "Superfast"
+from = "NDLS"
+to = "MAS"
+stops = "starts"
+dep = "16:10"
+pf = "4"
+src = "P-097"
+tag = "secondary"
+
+[[train]]
+number = "12621"
+name = "Tamil Nadu Express"
+type = "Superfast"
+from = "MAS"
+to = "NDLS"
+stops = "terminates"
+arr = "06:30"
+pf = "3"
+src = "P-098"
+tag = "secondary"
+
+[[train]]
+number = "12622"
+name = "Tamil Nadu Express"
+type = "Superfast"
+from = "NDLS"
+to = "MAS"
+stops = "starts"
+dep = "21:05"
+pf = "3"
+src = "P-099"
+tag = "secondary"
+
+[[train]]
+number = "12625"
+name = "Kerala SF Express"
+type = "Superfast"
+from = "TVC"
+to = "NDLS"
+stops = "terminates"
+arr = "13:30"
+pf = "7"
+src = "P-100"
+tag = "secondary"
+
+[[train]]
+number = "12626"
+name = "Kerala Express"
+type = "Superfast"
+from = "NDLS"
+to = "TVC"
+stops = "starts"
+dep = "20:10"
+pf = "3"
+src = "P-101"
+tag = "secondary"
+
+[[train]]
+number = "12627"
+name = "Karnataka SF Express"
+type = "Superfast"
+from = "SBC"
+to = "NDLS"
+stops = "terminates"
+arr = "09:00"
+pf = "7"
+src = "P-102"
+tag = "secondary"
+
+[[train]]
+number = "12628"
+name = "Karnataka SF Express"
+type = "Superfast"
+from = "NDLS"
+to = "SBC"
+stops = "starts"
+dep = "20:20"
+pf = "6"
+src = "P-103"
+tag = "secondary"
+
+[[train]]
+number = "12724"
+name = "Telangana Express"
+type = "Superfast"
+from = "NDLS"
+to = "HYB"
+stops = "starts"
+dep = "16:00"
+pf = "5"
+src = "P-104"
+tag = "secondary"
+
+[[train]]
+number = "20451"
+name = "Sogaria - New Delhi Intercity SF Express"
+type = "Superfast"
+from = "SGAC"
+to = "NDLS"
+stops = "terminates"
+arr = "22:35"
+pf = "12"
+src = "P-105"
+tag = "secondary"
+
+[[train]]
+number = "20452"
+name = "New Delhi - Sogaria Intercity SF Express"
+type = "Superfast"
+from = "NDLS"
+to = "SGAC"
+stops = "starts"
+dep = "07:10"
+pf = "6"
+src = "P-106"
+tag = "secondary"
+
+[[train]]
+number = "12230"
+name = "Lucknow Mail"
+type = "Mail/Express"
+from = "NDLS"
+to = "LKO"
+stops = "starts"
+dep = "22:00"
+pf = "12"
+src = "P-107"
+tag = "secondary"
+
+[[train]]
+number = "12303"
+name = "Poorva Express (via Patna)"
+type = "Mail/Express"
+from = "HWH"
+to = "SSB"
+stops = "through"
+arr = "06:20"
+dep = "06:45"
+pf = "12"
+src = "P-108"
+tag = "secondary"
+
+[[train]]
+number = "12723"
+name = "Telangana Express"
+type = "Mail/Express"
+from = "HYB"
+to = "NDLS"
+stops = "terminates"
+arr = "08:00"
+pf = "5"
+src = "P-109"
+tag = "secondary"
+
+[[train]]
+number = "14211"
+name = "Intercity Express"
+type = "Mail/Express"
+from = "GWL"
+to = "NDLS"
+stops = "terminates"
+arr = "10:00"
+pf = "12"
+src = "P-110"
+tag = "secondary"
+
+[[train]]
+number = "14212"
+name = "Intercity Express"
+type = "Mail/Express"
+from = "NDLS"
+to = "GWL"
+stops = "starts"
+dep = "17:40"
+pf = "6"
+src = "P-111"
+tag = "secondary"
+
+[[train]]
+number = "51901"
+name = "AGRA CANTT - OLD DELHI Passenger"
+type = "Passenger"
+from = "AGC"
+to = "DLI"
+stops = "through"
+arr = "15:31"
+dep = "15:36"
+pf = "1"
+src = "P-112"
+tag = "unconfirmed"
+
+[[train]]
+number = "51902"
+name = "OLD DELHI - AGRA CANTT Passenger"
+type = "Passenger"
+from = "DLI"
+to = "AGC"
+stops = "through"
+arr = "07:15"
+dep = "07:17"
+pf = "7"
+src = "P-113"
+tag = "unconfirmed"
+
+[[train]]
+number = "54473"
+name = "OLD DELHI - SAHARANPUR Passenger"
+type = "Passenger"
+from = "DLI"
+to = "SRE"
+stops = "through"
+arr = "18:33"
+dep = "18:40"
+pf = "15"
+src = "P-114"
+tag = "unconfirmed"
+
+[[train]]
+number = "54474"
+name = "SAHARANPUR - OLD DELHI Passenger"
+type = "Passenger"
+from = "SRE"
+to = "DLI"
+stops = "through"
+arr = "08:25"
+dep = "08:27"
+pf = "11"
+src = "P-115"
+tag = "unconfirmed"
+
+[[train]]
+number = "54539"
+name = "HAZRAT NIZAMUDDIN - AMBALA CANTT Passenger"
+type = "Passenger"
+from = "NZM"
+to = "UMB"
+stops = "through"
+arr = "03:20"
+dep = "03:30"
+pf = "7"
+src = "P-116"
+tag = "unconfirmed"
+
+[[train]]
+number = "54540"
+name = "AMBALA CANTT - HAZRAT NIZAMUDDIN Passenger"
+type = "Passenger"
+from = "UMB"
+to = "NZM"
+stops = "through"
+arr = "00:30"
+dep = "00:40"
+pf = "1"
+src = "P-117"
+tag = "unconfirmed"
+
+[[train]]
+number = "04471"
+name = "GHAZIABAD - PANIPAT MEMU Express Special (UnReserved)"
+type = "EMU/MEMU"
+from = "GZB"
+to = "PNP"
+stops = "through"
+arr = "18:05"
+dep = "18:07"
+pf = "6"
+src = "P-118"
+tag = "unconfirmed"
+
+[[train]]
+number = "04472"
+name = "PANIPAT - GHAZIABAD MEMU Express Special (UnReserved)"
+type = "EMU/MEMU"
+from = "PNP"
+to = "GZB"
+stops = "through"
+arr = "08:16"
+dep = "08:18"
+pf = "10"
+src = "P-119"
+tag = "unconfirmed"
+
+[[train]]
+number = "64062"
+name = "OLD DELHI - PALWAL Local"
+type = "EMU/MEMU"
+from = "DLI"
+to = "PWL"
+stops = "through"
+arr = "05:33"
+dep = "05:35"
+pf = "6"
+src = "P-120"
+tag = "unconfirmed"
+
+[[train]]
+number = "64064"
+name = "OLD DELHI - PALWAL Local"
+type = "EMU/MEMU"
+from = "DLI"
+to = "PWL"
+stops = "through"
+arr = "20:04"
+dep = "20:06"
+pf = "6"
+src = "P-121"
+tag = "unconfirmed"
+
+[[train]]
+number = "64074"
+name = "KOSI KALAN - NEW DELHI Local"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "KSV"
+stops = "starts"
+dep = "04:45"
+pf = "4"
+src = "P-122"
+tag = "unconfirmed"
+
+[[train]]
+number = "64076"
+name = "NEW DELHI - PALWAL Local"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "PWL"
+stops = "starts"
+dep = "00:15"
+pf = "8"
+src = "P-123"
+tag = "unconfirmed"
+
+[[train]]
+number = "64078"
+name = "NEW DELHI - PALWAL Local"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "PWL"
+stops = "starts"
+dep = "08:45"
+pf = "2"
+src = "P-124"
+tag = "unconfirmed"
+
+[[train]]
+number = "64080"
+name = "NEW DELHI - PALWAL Local"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "PWL"
+stops = "starts"
+dep = "17:05"
+pf = "5"
+src = "P-125"
+tag = "unconfirmed"
+
+[[train]]
+number = "64084"
+name = "NEW DELHI - PALWAL Local"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "PWL"
+stops = "starts"
+dep = "21:25"
+pf = "2"
+src = "P-126"
+tag = "unconfirmed"
+
+[[train]]
+number = "64089"
+name = "HAZRAT NIZAMUDDIN Parikrama Local"
+type = "EMU/MEMU"
+from = "NZM"
+to = "HNZM"
+stops = "through"
+arr = "18:03"
+dep = "18:05"
+pf = "1"
+src = "P-127"
+tag = "unconfirmed"
+
+[[train]]
+number = "64095"
+name = "NEW DELHI - SHAKURBASTI Local"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "SSB"
+stops = "starts"
+dep = "09:50"
+pf = "5"
+src = "P-128"
+tag = "unconfirmed"
+
+[[train]]
+number = "64449"
+name = "GHAZIABAD - NEW DELHI Ladies Special Local"
+type = "EMU/MEMU"
+from = "GZB"
+to = "NDLS"
+stops = "terminates"
+arr = "09:20"
+pf = "15"
+src = "P-129"
+tag = "unconfirmed"
+
+[[train]]
+number = "64450"
+name = "NEW DELHI - GHAZIABAD Ladies Special Local"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "GZB"
+stops = "starts"
+dep = "17:50"
+pf = "5"
+src = "P-130"
+tag = "unconfirmed"
+
+[[train]]
+number = "64464"
+name = "PANIPAT - NEW DELHI MEMU"
+type = "EMU/MEMU"
+from = "PNP"
+to = "NDLS"
+stops = "terminates"
+arr = "07:30"
+pf = "12"
+src = "P-131"
+tag = "unconfirmed"
+
+[[train]]
+number = "64466"
+name = "PANIPAT - NEW DELHI MEMU"
+type = "EMU/MEMU"
+from = "PNP"
+to = "NDLS"
+stops = "terminates"
+arr = "23:55"
+pf = "1"
+src = "P-132"
+tag = "unconfirmed"
+
+[[train]]
+number = "64471"
+name = "GHAZIABAD - PANIPAT MEMU"
+type = "EMU/MEMU"
+from = "GZB"
+to = "PNP"
+stops = "through"
+arr = "18:03"
+dep = "18:05"
+pf = "6"
+src = "P-133"
+tag = "unconfirmed"
+
+[[train]]
+number = "64472"
+name = "PANIPAT - GHAZIABAD MEMU"
+type = "EMU/MEMU"
+from = "PNP"
+to = "GZB"
+stops = "through"
+arr = "08:16"
+dep = "08:18"
+pf = "10"
+src = "P-134"
+tag = "unconfirmed"
+
+[[train]]
+number = "64491"
+name = "PALWAL - NEW DELHI Ladies Special Local"
+type = "EMU/MEMU"
+from = "PWL"
+to = "NDLS"
+stops = "terminates"
+arr = "10:00"
+pf = "5"
+src = "P-135"
+tag = "unconfirmed"
+
+[[train]]
+number = "64492"
+name = "NEW DELHI - PALWAL Ladies Special Local"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "PWL"
+stops = "starts"
+dep = "17:50"
+pf = "3"
+src = "P-136"
+tag = "unconfirmed"
+
+[[train]]
+number = "64534"
+name = "PANIPAT - GHAZIABAD MEMU"
+type = "EMU/MEMU"
+from = "PNP"
+to = "GZB"
+stops = "through"
+arr = "19:55"
+dep = "20:05"
+pf = "11"
+src = "P-137"
+tag = "unconfirmed"
+
+[[train]]
+number = "64911"
+name = "NEW DELHI - ROHTAK MEMU"
+type = "EMU/MEMU"
+from = "NDLS"
+to = "ROK"
+stops = "starts"
+dep = "09:25"
+pf = "1"
+src = "P-138"
+tag = "unconfirmed"
+
+[[train]]
+number = "64912"
+name = "ROHTAK - NEW DELHI MEMU"
+type = "EMU/MEMU"
+from = "ROK"
+to = "NDLS"
+stops = "terminates"
+arr = "09:15"
+pf = "1"
+src = "P-139"
+tag = "unconfirmed"

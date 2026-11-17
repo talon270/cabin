@@ -1,0 +1,19 @@
+[package]
+name = "cabin-web"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The three web dependencies the plan approves, as in twr. wasm-bindgen is
+# pinned to the installed CLI: the glue and the library must match exactly,
+# and build.sh refuses to build when they do not.
+[dependencies]
+cabin-sim = { path = "../sim" }
+wasm-bindgen = "=0.2.130"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+  "Window", "Document", "Element", "HtmlCanvasElement",
+  "CanvasRenderingContext2d", "console",
+] }

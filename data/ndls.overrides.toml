@@ -1,0 +1,21 @@
+# NDLS overrides for cabin-osm, keyed by OpenStreetMap id.
+#
+# Each entry names an OSM element; if an OSM edit deletes it, cabin-osm refuses
+# to build until this file is fixed, so a stale line cannot silently attach to
+# nothing. Plan limit: more than 20 lines in all means stop and ask whether to
+# hand-draw the yard instead.
+#
+# After editing: cargo run -p cabin-osm
+#
+# [drop]      way id = true         ignore this way
+# [kind]      way id = "running"    OSM tags it yard or siding, but trains run it
+# [platform]  way id = track way id the platform serves, when proximity picks wrong
+# [join]      node id = node id     merge a node into another: a junction OSM left open
+
+[drop]
+# Tilak Bridge station's two islands, about 1 km south-east of NDLS; its running
+# lines stay in the graph.
+770843509 = true
+770843510 = true
+# "Platform 16" drawn twice: this open line repeats the closed outline 77366959.
+1235504211 = true
