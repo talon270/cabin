@@ -15,7 +15,8 @@
 //!   3. no live lock holds any of its resources (C3-154 "for one only")
 //!   4. no train on its path, or within FOULING_M of a junction on it
 //!   5. no train on its overlap (C3-143 "120 m"), the same two ways
-//!   6. for a portal exit, the block beyond is free (C3-148 "Line Clear")
+//!   6. for a portal exit, no train is still coming in by it, and the
+//!      block beyond is free (C3-148 "Line Clear")
 //!
 //! A berthed train's route lets go of everything but the junctions the
 //! body still stands on, so a departure can be set behind it; occupancy,
@@ -188,6 +189,9 @@ impl Interlocking {
         }
 
         if let Exit::Portal(p) = exit {
+            if let Some(by) = occ.entering(p) {
+                return Err(Refusal::Occupied { at: Res::Edge(yard.portals[p].edge), by });
+            }
             self.line_clear(p)?;
         }
 

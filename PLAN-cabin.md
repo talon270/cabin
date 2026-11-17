@@ -248,7 +248,7 @@ impl World {
 | `BLOCK_HEADWAY_S` | 180 | assumed |
 | `HOME_SETBACK_M`, `STARTER_SETBACK_M` | 30, 10 | assumed: placement rules C3-58, C3-63; distances authored |
 | `PANEL_STRETCH` | 6 | assumed; set by the 44 px check in B6 |
-| `TIME_SCALE` | set in B5 | assumed; chosen by you from the soak numbers |
+| `TIME_SCALE` | 4, chosen 2026-11-17 from the B5 soak | assumed; chosen by you from the soak numbers |
 | `TRAIN_LEN_M`, `DWELL_S`, rates, mix | from B1 | each row's own tag in `research/traffic.md` |
 | `ACCEL_MS2`, `BRAKE_MS2` | 0.3, 0.5 | assumed |
 
@@ -349,6 +349,49 @@ Decisions taken in the build, each smaller than the plan's text:
 **INCONSISTENCY (medium), found in B4, not fixed: Starters stand inside the fouling length.** 29 of 32 Starters stand `STARTER_SETBACK_M` = 10 m before a trailing point or a crossing. `FOULING_M` is 30 m. A berthed train fouls the other track, and the guard refuses every route over that junction while the train stands there. This is safe, but it may make play slow. B5's soak measures how often it refuses. The smallest fix is to measure a Starter's setback from the fouling mark, not the node (`FOULING_M` + 10 m), which changes the yard file and the B3 setback test. T-40 places the real mark where track centres close to 4.265 m, which the polylines could measure.
 
 **Open from B4:** the skeleton train still runs in `cabin-web`. The B2 note says B4 deletes it; it goes when the page drives `World`. `crates/sim/examples/b4_probe.rs` is a scratch probe that waits for your yes to delete.
+
+**B5 built 2026-11-17.** `tests/common/signaller.rs` (the auto-signaller: every 10 game seconds, the first route the interlocking accepts for each waiting train; it never sends a train into a berth whose Starter has no departure), `tests/b5_long_run.rs` (10 game hours from 06:00 at the busy day's hourly rate, 3 seeds, then a drain in which every train must leave; plus a same-seed replay test), `tests/b5_fuzz.rs` (worst input 6), and the seeded `Rng` in `lib.rs`, copied from `twr`. The invariant checker now builds its node table once; its four rules are unchanged. Run times: soak 11.4 s, fuzz 121 s, in release.
+
+**The soak found two holes in the guard, and both are fixed.** Each has a named test in `b4_rules.rs`. Each test failed before the fix (`Ok(1)`, and a refused request that changed the world) and passes after it.
+- **A train offered at a portal was invisible.** Its head stands on the box edge and the rest of it is outside, so inside the box its body has no length, and `Occupancy::on` does not see a body with no length. A departure out by N5 was set head-on into it, and a second train was offered on top of it. HN5 makes this last: N5's portal edge is 29.1 m, shorter than `HOME_SETBACK_M`, so the Home stands on the box edge and the train never comes further in. Fix: a body reports the portal it is still coming in by (`Body::entering`); `request` refuses a portal exit, and `spawn` refuses a second train, while one is still entering there.
+- **A train was offered up to a Home that fouls a junction in use.** A train stopped at HN5 stands 29.1 m from point 90, inside `FOULING_M`, and was offered while the train before it still had its tail near that point. Fix: `spawn` refuses while that junction is locked or fouled. It also checks every edge up to the Home now, not only the portal edge. On today's yard every Home is on its portal edge, so that part changes nothing yet.
+
+**Result, as printed:**
+
+| | Seed 1 | Seed 2 | Seed 3 |
+|---|---|---|---|
+| Trains offered, all left | 132 | 159 | 151 |
+| Ticks checked, invariant failures | 74,840, 0 | 74,113, 0 | 75,721, 0 |
+| Decisions; peak game hour | 264; 37 | 318; 39 | 302; 37 |
+| `Occupied` refusals, all of them a junction fouled by a train at a Starter | 922 | 1,936 | 2,391 |
+| Longest wait at a Starter after the dwell | 1,220 s (ST5S) | 15,070 s (ST14N) | 6,580 s (ST4S) |
+| Longest wait outside a portal | 2,615 s | 16,378 s | 5,783 s |
+
+Fuzz: 1,000,000 actions over seeds 11 to 13, 1,920,653 ticks checked, 0 invariant failures; 10,905 refusals were compared against a copy of the world, and none changed it. At most 26 trains were in the yard at one time.
+
+**Decisions per real minute, for your `TIME_SCALE` pick.** A decision is one route set: each train needs two, one in and one out. The rate is the busy-day chart (V-12, secondary), and every train here arrives and departs, so read it as pace, not as a count.
+
+| `TIME_SCALE` | Average over 06:00 to 16:00 | Peak game hour |
+|---|---|---|
+| 1 | 0.49 | 0.65 |
+| 4 | 1.96 | 2.60 |
+| 10 | 4.91 | 6.50 |
+
+**Alternative routes: 230 of 23,810 refusals (1.0%).** That is how often a refused route's path was blocked while another free path ran to the same exit. The check covers the path only, because the overlap and the block beyond are the same for any path to one exit. The denominator counts every route the signaller tried, retried every 10 s, so the share per decision would be higher (230 against 884 decisions). By the plan's own rule, a "via" click is not needed now.
+
+**BUG (high), found in B5, handled in the test controller only: the station gridlocks.** With trains offered whenever a portal was free, 2 of 3 seeds locked up at about 7.6 game hours (ticks 55,020 and 55,820). 10 trains were berthed, and 12 more waited at all 12 Homes. Every departure needed a portal track that a waiting arrival stood on, because every portal is worked in both directions; NDLS's real approaches are double line. The soak's controller now accepts an offered train only when it can route that train into a berth at once (`Signaller::admit`). This is the real practice: a signalman gives Line Clear to the station in rear only for a train he can receive. The game has no such move, so a player can gridlock a shift that cannot be won. Before B6 you choose one of three: (1) the player accepts each offered train, (2) each portal is made Up or Down, which needs the direction of each running way, or (3) the game holds a train outside until a berth is free.
+
+**The Starter-fouling INCONSISTENCY from B4 is now measured.** Every `Occupied` refusal in the soak was a junction fouled by a train at a Starter: 922, 1,936 and 2,391 on the three seeds. It starves one-exit platforms. ST14N departs only by N5, and the train at ST13N fouls point 8 on that route. P13 was refilled again and again, so one train waited 15,070 s, 4.2 game hours. The smallest fix is still the one in the B4 note.
+
+**MODEL GAP (medium): arrivals into P15 and P16 from the south can never leave.** No train reverses in this model, and ST15N and ST16N have no departure. 10 routes lead there (from HS1, HS2, HS3, HS5 and HS6). The auto-signaller skips them, but a player can strand a train there for the rest of the shift. Either the game removes those routes, or a terminating train turns back, which is out of scope today.
+
+**Not checked in B5:** mutant runs against the soak and fuzz. The two fixes above are proved by their B4 tests, failing before and passing after. Whether the fuzz alone catches either hole was not run.
+
+**Decisions for B6, taken by you 2026-11-17.** None of them is implemented yet.
+- **`TIME_SCALE` = 4.** That is about 2.0 decisions per real minute on average and 2.6 in the peak hour. It goes into `consts.rs`, tagged `assumed`, citing this soak.
+- **The player accepts each offered train.** An offered train waits outside its portal until you accept it, which is Line Clear given to the station in rear. B6 adds the accept control to the rack's "due" bay, and the sim gains an `Action` for it. Time a train waits outside is delay, and B7's score counts it. This replaces the soak controller's `admit` as the guard against gridlock: a player who accepts trains the yard cannot take can still gridlock it, and the delay shows that.
+- **The panel opens on a closer view.** `PANEL_STRETCH` stays at 6. The default view frames the platforms, and you pan to see the throats. B6's 44 px check runs at that default view.
+- **Arrivals into a berth with no departure are removed.** `build_routes` drops any arrival whose Starter has no departure: the 10 routes into ST15N and ST16N from the south. Platforms 15 and 16 are then worked from the north only. The B3 route count and its test change with it.
 
 **Two decisions are yours, later, and the plan does not guess them:**
 - **The score (before B7).** `GUIDE-games.md` marks the score shape as medium confidence. The proposal is three plain numbers: trains handled, delay in minutes against the generated schedule, and signals put back in the face of a train. The interlocking prevents collisions, so "incidents" as `twr` counts them do not exist here.

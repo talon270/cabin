@@ -7,9 +7,11 @@
 //!   · train: train bodies, motion, and the occupancy the interlocking reads
 //!   · World: the yard, the interlocking and the trains, stepped by ticks
 //!   · NDLS: the New Delhi yard, baked into the build
+//!   · Rng: the seeded generator; one seed gives one run
 //!
-//! The seeded `Rng` arrives with traffic in B7: nothing in B4 is random.
-//! `World::spawn` offers a train by hand until then.
+//! Nothing in `World` is random yet: B5's soak and fuzz drive it from an
+//! `Rng`, and B7's traffic will. `World::spawn` offers a train by hand until
+//! then.
 
 pub mod consts;
 pub mod interlock;
@@ -20,7 +22,7 @@ pub mod yard;
 
 use std::collections::BTreeMap;
 
-use consts::{BRAKE_MS2, SPEED_NORMAL_KMH, SPEED_REVERSE_KMH};
+use consts::{BRAKE_MS2, FOULING_M, SPEED_NORMAL_KMH, SPEED_REVERSE_KMH};
 use interlock::{Aspect, Interlocking, Refusal};
 use route::{Exit, Lie, PortalId, Res, RouteId, SignalId};
 use train::{Occupancy, Train, TrainId, along, kmh};
@@ -81,17 +83,17 @@ impl World {
 
     /// Offer a train of `len_m` at a portal: its head at the box edge, the
     /// rest of it still outside, at line speed or slower if the Home is
-    /// close. Refused while the portal track is occupied or locked, or the
-    /// block is still running out a departure.
+    /// close. Refused while a train is still coming in by the portal, the
+    /// track up to the Home is occupied or locked, the block is still
+    /// running out a departure, or the Home stands within FOULING_M of a
+    /// junction that is locked or fouled (HN5 does: the box edge cuts its
+    /// line 29.1 m short of point 90).
     pub fn spawn(&mut self, portal: PortalId, len_m: f64) -> Result<TrainId, Refusal> {
         let y = &self.yard;
         let p = &y.portals[portal];
         let occ = self.occupancy();
-        if let Some(by) = occ.on(p.edge, 0.0, y.edges[p.edge].len) {
+        if let Some(by) = occ.entering(portal) {
             return Err(Refusal::Occupied { at: Res::Edge(p.edge), by });
-        }
-        if let Some(r) = self.lock.holder(Res::Edge(p.edge)) {
-            return Err(r);
         }
         self.lock.line_clear(portal)?;
         // In from the box edge to the first signal facing this way.
@@ -108,10 +110,34 @@ impl World {
                 _ => panic!("portal {} reaches no signal", p.name),
             }
         };
+        for &(e, _) in &run {
+            if let Some(by) = occ.on(e, 0.0, y.edges[e].len) {
+                return Err(Refusal::Occupied { at: Res::Edge(e), by });
+            }
+            if let Some(r) = self.lock.holder(Res::Edge(e)) {
+                return Err(r);
+            }
+        }
+        let s = &y.signals[signal];
+        let (e, f) = *run.last().unwrap();
+        let n = y.head(e, f);
+        let at = match g.at[n] {
+            Junction::Point(k) => Some(Res::Point(k)),
+            Junction::Crossing(k) => Some(Res::Crossing(k)),
+            _ => None,
+        };
+        if let Some(at) = at.filter(|_| y.edges[e].len - along(y, e, f, s.offset) < FOULING_M) {
+            if let Some(r) = self.lock.holder(at) {
+                return Err(r);
+            }
+            if let Some(by) = occ.near(y, n, FOULING_M, &[]) {
+                return Err(Refusal::Occupied { at, by });
+            }
+        }
         let id = self.next_train;
         self.next_train += 1;
-        let s = &y.signals[signal];
         let mut t = Train::new(id, len_m, run);
+        t.from = Some(portal);
         t.limit = Some((t.run.len() - 1, along(y, s.edge, s.forward, s.offset)));
         t.next_signal = Some(signal);
         t.v = t.vmax.min(train::stop_speed(t.to_limit(y)));
@@ -195,6 +221,36 @@ impl World {
 
     pub fn lie(&self, k: usize) -> Lie {
         self.lock.lie(k)
+    }
+}
+
+/// SplitMix64, copied from `twr/crates/sim/src/lib.rs`. Small, fast, and
+/// identical on every platform, which is all a replayable game needs;
+/// nothing here is security-sensitive.
+#[derive(Debug, Clone)]
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Self {
+        Rng(seed)
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform in [0, 1), from the top 53 bits.
+    pub fn next_f64(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// Uniform in 0..n. The modulo bias is below 1e-15 for any n here.
+    pub fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() % n as u64) as usize
     }
 }
 

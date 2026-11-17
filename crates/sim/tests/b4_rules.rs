@@ -235,6 +235,60 @@ fn refusal_no_line_clear_until_the_headway_has_run() {
     set(&mut w, &again);
 }
 
+/// Found by the B5 soak: a train offered at a portal stands with its head
+/// on the box edge and the rest outside, a body of no length inside. A
+/// departure out by that portal was set head-on into it. HN5 makes it last:
+/// N5's portal edge is 29.1 m, shorter than HOME_SETBACK_M, so the Home
+/// stands on the box edge and the train never comes further in.
+#[test]
+fn refusal_occupied_a_departure_into_a_train_still_entering_by_its_portal() {
+    for (portal, starter) in [("N5", "ST12N"), ("N1", "ST4N")] {
+        let mut w = world();
+        let p = common::portal(&w, portal);
+        let t = w.spawn(p, LONG_M).expect("spawn");
+        let d = route(&w, sig(&w, starter), Exit::Portal(p));
+        match refused(&mut w, Action::SetRoute { entry: d.entry, exit: d.exit }) {
+            Refusal::Occupied { by, .. } => assert_eq!(by, t, "{portal}"),
+            x => panic!("{portal}: {x:?}"),
+        }
+    }
+}
+
+/// The same fault from the other side: a second train offered at N5 onto
+/// the first, which stands on the box edge at HN5.
+#[test]
+fn a_second_train_is_not_offered_onto_one_still_entering() {
+    let mut w = world();
+    let p = common::portal(&w, "N5");
+    let t = w.spawn(p, LONG_M).expect("spawn");
+    w.step_ticks(10);
+    assert_eq!(w.spawn(p, LONG_M), Err(Refusal::Occupied { at: Res::Edge(w.yard.portals[p].edge), by: t }));
+}
+
+/// Found by the B5 soak: a train stopped at HN5 stands 29.1 m from point
+/// 90, inside FOULING_M. A train was offered at N5 while the train before
+/// it still had its tail within FOULING_M of that point.
+#[test]
+fn no_train_is_offered_up_to_a_home_that_fouls_a_junction_in_use() {
+    let mut w = world();
+    let mut ck = Checker::new(&w);
+    let p = common::portal(&w, "N5");
+    let edge = w.yard.portals[p].edge;
+    let node = { let e = &w.yard.edges[edge]; if e.a == w.yard.portals[p].node { e.b } else { e.a } };
+    let t = w.spawn(p, SHORT_M).expect("spawn");
+    let r = arrivals(&w).into_iter().find(|r| r.entry == sig(&w, "HN5")).unwrap();
+    set(&mut w, &r);
+    run_until(&mut w, &mut ck, 900, |w| {
+        let o = w.occupancy();
+        o.on(edge, 0.0, w.yard.edges[edge].len).is_none() && o.entering(p).is_none() && o.near(&w.yard, node, cabin_sim::consts::FOULING_M, &[]).is_some()
+    });
+    match w.spawn(p, SHORT_M) {
+        Err(Refusal::Occupied { by, .. }) => assert_eq!(by, t),
+        Err(Refusal::Conflict { .. }) => {}
+        x => panic!("{x:?}"),
+    }
+}
+
 #[test]
 fn refusal_approach_locked_then_released() {
     // Worst input 3: a route cancelled in the face of a train, then a
@@ -411,7 +465,7 @@ fn refusal_overlap_occupied_by_a_body_on_overlap_track() {
     let r = arrivals(&w).into_iter().find(|r| r.overlap.iter().any(|e| !r.path.contains(e))).expect("an arrival with an overlap");
     let e = *r.overlap.iter().find(|e| !r.path.contains(e)).unwrap();
     let len = w.yard.edges[e].len;
-    let body = Body { spans: vec![Span { edge: e, lo: len / 2.0 - 5.0, hi: len / 2.0 + 5.0 }], head: (e, len / 2.0 + 5.0), stopped: true };
+    let body = Body { spans: vec![Span { edge: e, lo: len / 2.0 - 5.0, hi: len / 2.0 + 5.0 }], head: (e, len / 2.0 + 5.0), stopped: true, entering: None };
     let occ = Occupancy { bodies: [(7, body)].into_iter().collect() };
     let mut lock = w.lock.clone();
     assert_eq!(lock.request(&w.yard, &occ, r.entry, r.exit), Err(Refusal::OverlapOccupied { at: Res::Edge(e), by: 7 }));

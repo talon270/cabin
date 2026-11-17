@@ -31,27 +31,16 @@ pub struct Checker {
     lies: Vec<Lie>,
     /// Per portal, the edges from the box edge to its Home, and the Home.
     blocks: Vec<(Vec<usize>, usize)>,
+    /// Per node, the edges at it and which end of each meets it (true: the
+    /// `a` end). Built once: the B5 soak checks 2 million ticks.
+    incident: Vec<Vec<(usize, bool)>>,
     pub ticks: u64,
 }
 
-/// Edges at `node`, and which end of each meets it (true: the `a` end).
-fn incident(y: &Yard, node: usize) -> Vec<(usize, bool)> {
-    let mut v = Vec::new();
-    for (k, e) in y.edges.iter().enumerate() {
-        if e.a == node {
-            v.push((k, true));
-        }
-        if e.b == node {
-            v.push((k, false));
-        }
-    }
-    v
-}
-
 /// Edges at `node` on which the body comes within `m` of it.
-fn near(y: &Yard, b: &Body, node: usize, m: f64) -> BTreeSet<usize> {
+fn near(y: &Yard, incident: &[(usize, bool)], b: &Body, m: f64) -> BTreeSet<usize> {
     let mut out = BTreeSet::new();
-    for (e, at_a) in incident(y, node) {
+    for &(e, at_a) in incident {
         let len = y.edges[e].len;
         for s in b.spans.iter().filter(|s| s.edge == e) {
             let close = if at_a { s.lo < m - EPS } else { s.hi > len - m + EPS };
@@ -79,7 +68,12 @@ impl Checker {
             }
             blocks.push((edges, home));
         }
-        Checker { lies: (0..y.points.len()).map(|k| w.lie(k)).collect(), blocks, ticks: 0 }
+        let mut incident = vec![Vec::new(); y.nodes.len()];
+        for (k, e) in y.edges.iter().enumerate() {
+            incident[e.a].push((k, true));
+            incident[e.b].push((k, false));
+        }
+        Checker { lies: (0..y.points.len()).map(|k| w.lie(k)).collect(), blocks, incident, ticks: 0 }
     }
 
     fn in_block(&self, y: &Yard, b: &Body) -> bool {
@@ -113,7 +107,7 @@ impl Checker {
         // 2. Fouling at every point and crossing.
         let junctions: Vec<usize> = y.points.iter().map(|p| p.node).chain(y.crossings.iter().map(|c| c.node)).collect();
         for &n in &junctions {
-            let close: Vec<(usize, BTreeSet<usize>)> = bodies.iter().map(|&(t, b)| (t, near(y, b, n, FOULING_M))).filter(|(_, s)| !s.is_empty()).collect();
+            let close: Vec<(usize, BTreeSet<usize>)> = bodies.iter().map(|&(t, b)| (t, near(y, &self.incident[n], b, FOULING_M))).filter(|(_, s)| !s.is_empty()).collect();
             if close.len() > 1 {
                 fail(format!("trains {:?} all stand within {FOULING_M} m of junction node {n}", close));
             }
@@ -129,7 +123,7 @@ impl Checker {
         // 4. No point moves under a train.
         for (k, p) in y.points.iter().enumerate() {
             let now = w.lie(k);
-            if now != self.lies[k] && bodies.iter().any(|&(_, b)| !near(y, b, p.node, 1.0).is_empty()) {
+            if now != self.lies[k] && bodies.iter().any(|&(_, b)| !near(y, &self.incident[p.node], b, 1.0).is_empty()) {
                 fail(format!("point {k} moved {:?} -> {now:?} with a train on it", self.lies[k]));
             }
             self.lies[k] = now;

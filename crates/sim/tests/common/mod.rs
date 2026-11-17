@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 pub mod invariant;
+pub mod signaller;
 
 use cabin_sim::interlock::Refusal;
 use cabin_sim::route::{Exit, PortalId, Route, SignalId};

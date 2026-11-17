@@ -36,6 +36,11 @@ pub struct Body {
     /// The head: its edge and metres from that edge's `a` end.
     pub head: (usize, f64),
     pub stopped: bool,
+    /// The portal the train is still coming in by, while any of it is
+    /// outside the box. That part has no span: a train offered at the box
+    /// edge has a body of no length inside, which `Occupancy::on` cannot
+    /// see, so the block beyond the portal carries it instead.
+    pub entering: Option<PortalId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -53,6 +58,11 @@ impl Occupancy {
     /// `except`.
     pub fn near(&self, yard: &Yard, node: usize, m: f64, except: &[usize]) -> Option<TrainId> {
         self.bodies.iter().find(|(_, b)| crate::interlock::body_near(yard, b, node, m, except)).map(|(&t, _)| t)
+    }
+
+    /// A train still coming in by `portal`.
+    pub fn entering(&self, portal: PortalId) -> Option<TrainId> {
+        self.bodies.iter().find(|(_, b)| b.entering == Some(portal)).map(|(&t, _)| t)
     }
 }
 
@@ -90,6 +100,9 @@ pub struct Train {
     pub leaving: Option<PortalId>,
     /// The route taken at the next signal, until the train is past it.
     pub route: Option<RouteId>,
+    /// The portal it was offered at; the body reports it while any of the
+    /// train is still outside.
+    pub from: Option<PortalId>,
 }
 
 /// Metres along `edge` in direction `forward` of a point `off` metres from
@@ -113,6 +126,7 @@ impl Train {
             next_signal: None,
             leaving: None,
             route: None,
+            from: None,
         }
     }
 
@@ -136,7 +150,8 @@ impl Train {
         }
         spans.reverse();
         let (he, hf) = self.run[self.head];
-        Body { spans, head: (he, along(yard, he, hf, self.head_m)), stopped: self.v == 0.0 }
+        let entering = self.from.filter(|_| left > EPS && self.leaving.is_none());
+        Body { spans, head: (he, along(yard, he, hf, self.head_m)), stopped: self.v == 0.0, entering }
     }
 
     /// Metres from the head to the point `at` metres along `run[k]`.
