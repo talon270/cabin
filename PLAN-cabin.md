@@ -321,6 +321,35 @@ Two review findings are open and are yours to decide. **The platform record cann
 
 **Pair check, 2026-11-16: the "47 pairs" figure is too low; it is 76 of 176.** Detail in the session scratchpad, `PAIR-CHECK.md`. Slips at all 8 diamonds open 0 of the 47, and the search already covers every track kind, so neither is the cause. Every pair opens with exactly one turn-back, at 6 nodes, each a reversal over legs 1 to 12 degrees apart: the block is direction. One defect inflates the count: portal N4 (node 12200089098) has two running ways, and `Yard::graph` reads a two-edge node as `Through`, so a train can U-turn there (north on way 1318209075, back south on way 1316288829). With portal nodes as ends, 29 more pairs have no path (S1 to S6 into platforms 1, 2, 4, 5, 7, 8, 9, 10). No built route uses the U-turn (0 of 200), so signals and routes stand; the report's pair count, the gate's reach check and Guard 2's comparison read through the same graph. **Fixed 2026-11-17.** `Yard::graph` and the extractor's own `class` table both end every portal node; `cabin-osm` writes one portal per running way at a node, so N4 gets `N4b` (node 263, edge 301) and a `HN4b` Home. Re-run result: 66 of 192 pairs have no path (12 portals; 55 of 176 without `N4b`, which reaches no platform 6 to 16), down from the 76 of 176 forced-End count. With the U-turn gone, the promotion rule lifted 4 ways from siding to running (ways 77366994, 77594847, 818377318, 1186253187, all assumed, listed as `promoted` in the `.yard`), which moved Starters `ST4S`, `ST8S`, `ST1S` and took routes from 210 to 252. Check those 4 ways before B4. Whether the missing paths are OpenStreetMap's gaps or the real station is not known; a track diagram would settle it.
 
+**B4 built 2026-11-17.** `crates/sim/src/interlock.rs` (`Interlocking`, `Refusal`, `Aspect`), `train.rs` (`Train`, `Body`, `Occupancy`), `World` in `lib.rs` (`new`, `apply`, `spawn`, `step_ticks`), eight constants in `consts.rs` (`TICK_HZ` = 2 is new), `tests/common/invariant.rs` (the checker, 4 rules after every tick), `tests/b4_rules.rs` (19 tests: one per `Refusal` variant, each refusal compared against a clone of the world, worst inputs `w1_` to `w5_`, motion and aspects). `cargo test --release --workspace` passes. Mutant check, each mutant applied alone and reverted:
+
+| Mutant | Tests that fail |
+|---|---|
+| No conflict check | 4, incl. `refusal_conflict`, `w1_`, `w2_` |
+| No path occupancy check | `refusal_occupied`, `w2_` |
+| No overlap occupancy check | `refusal_overlap_occupied_by_a_body_on_overlap_track` |
+| No fouling check | `refusal_overlap_occupied` |
+| No Line Clear | `refusal_no_line_clear_until_the_headway_has_run` |
+| No train-past-signal check | `refusal_train_past_signal` |
+| No approach locking | 2, incl. `a_route_put_back_too_late_to_stop_...` |
+| Release everything on entry | 11 |
+| Train ignores its braking curve | `a_train_brakes_no_harder_than_its_service_brake` |
+| A lowered speed limit applies at once | the same |
+| Train creeps past its limit | 11, incl. `a_train_with_no_route_stops_at_the_home` |
+
+Decisions taken in the build, each smaller than the plan's text:
+- **A berth is its exit Starter.** The train stops at the Starter that `Exit::Berth` names, so B4 needs no platform offset. The open review finding about platform length is not closed: a platform's usable length is still unread, and a 548.6 m train at ST16N leaves its tail 26 m past point 12. `w4_` tests that case.
+- **A berthed train's route lets go of its track.** At rest, the route keeps only the points and crossings the body stands on. Occupancy protects the rest, and every request checks it. That lets a departure be set behind the train.
+- **Fouling is checked per request.** A route is refused when another train stands within `FOULING_M` of a junction on it, on an edge the route does not use. This is how `OverlapOccupied` happens in NDLS: no Starter stands on another route's overlap track (counted: 0).
+- **Approach locking.** Cancelling a route a train has taken puts the signal to red at once and holds the locks for `APPROACH_RELEASE_S`. A train that can still stop gives the route up. A train that cannot stop runs through under the held locks.
+- **One speed limit per route.** A route that sets any point reverse is run at 15 km/h throughout. A per-point limit needs point positions on the run. Trains brake down to a lowered limit at `BRAKE_MS2`. The braking curve is the exact one for 2 Hz ticks (v²/2b + v·dt/2 = d), because the continuous √(2bd) braked 13% too hard.
+- **Checker rule 4 is "no point moves under a train", within 1 m of its node.** Within `FOULING_M` it failed on a point that the overlap had set and that went back to normal 10 m ahead of a berthed train. Rule 2 covers trains standing near a junction.
+- **No train runs through a platform.** The arrival and the departure both hold the platform track, so they cannot be set at the same time. Every train stops. `DoubleYellow` cannot occur in NDLS. The aspect code has it, and no test reaches it.
+
+**INCONSISTENCY (medium), found in B4, not fixed: Starters stand inside the fouling length.** 29 of 32 Starters stand `STARTER_SETBACK_M` = 10 m before a trailing point or a crossing. `FOULING_M` is 30 m. A berthed train fouls the other track, and the guard refuses every route over that junction while the train stands there. This is safe, but it may make play slow. B5's soak measures how often it refuses. The smallest fix is to measure a Starter's setback from the fouling mark, not the node (`FOULING_M` + 10 m), which changes the yard file and the B3 setback test. T-40 places the real mark where track centres close to 4.265 m, which the polylines could measure.
+
+**Open from B4:** the skeleton train still runs in `cabin-web`. The B2 note says B4 deletes it; it goes when the page drives `World`. `crates/sim/examples/b4_probe.rs` is a scratch probe that waits for your yes to delete.
+
 **Two decisions are yours, later, and the plan does not guess them:**
 - **The score (before B7).** `GUIDE-games.md` marks the score shape as medium confidence. The proposal is three plain numbers: trains handled, delay in minutes against the generated schedule, and signals put back in the face of a train. The interlocking prevents collisions, so "incidents" as `twr` counts them do not exist here.
 - **Alternative routes (after B5).** `build_routes` keeps the shortest path per signal pair. If the soak shows the shortest route blocked while another path was free in more than a small share of requests, a later slice adds a "via" click. The number decides, not a guess.
