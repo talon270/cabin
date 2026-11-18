@@ -7,13 +7,6 @@
 //! row is written `C3-143 "phrase"`; `tests/ledger.rs` fails if that row of
 //! `rails/research.md` no longer holds the phrase.
 
-/// assumed: how far the panel stretches the cross-track direction (plan A5).
-/// NDLS's 16 platform tracks sit in 115 m across, so at true scale
-/// neighbouring signals are a few pixels apart. Real control panels are
-/// schematic for the same reason. You kept 6 on 2026-11-17 and chose a
-/// closer default view instead; B6's 44 px check runs at that view.
-pub const PANEL_STRETCH: f64 = 6.0;
-
 /// solid: the line beyond a signal that must be clear before the signal in
 /// rear clears, metres: C3-143 "120 m with multiple-aspect". That NDLS has
 /// multiple-aspect signals is assumed; with two-aspect signals it is 180 m.

@@ -44,8 +44,8 @@
 </script>
 <style>
   /* Nothing OS Classic, sourcing weak (tagged `blog` in designs.md). Its red
-     is dropped (plan A7): red, yellow and green are signal aspects and
-     appear in signal heads only, so this sheet defines none of them.
+     is dropped (plan A7): red, yellow and green appear only in the panel
+     palette block below, as indications and signal aspects.
      Dark values are twr's, measured against #000 on 2026-11-11: --hair
      3.91:1, --line 3.07:1, --dim 9.28:1; the designs.md #2a2a2c line is
      1.47:1 and vanishes on black. Fonts are named: on this machine the
@@ -56,6 +56,17 @@
           --elev: #fff; --elev-dim: #585a5a; --scrim: rgb(0 0 0 / .45); }
   :root[data-theme="dark"] { --fg: #fff; --bg: #000; --dim: #acacb0; --line: #5a5a60; --hair: #6a6a70; --panel: #0b0b0c;
           --elev: #57575b; --elev-dim: #d0d0d4; --scrim: rgb(0 0 0 / .6); }
+  /* Panel palette: the only colours the canvas draws, and the only place
+     red, yellow and green are named (verify_b8's colour rule checks this).
+     Indian Railways panel convention, research/panel.md: clear track unlit
+     (PN-01), a set route white (PN-02, PN-08; black on light), occupied
+     track red over any route (PN-03). Light keeps the roles with darker
+     hues. Aspects are the same in both themes; each head has an ink
+     outline. Against the canvas, measured 2026-11-19: dark --trk 1.85:1,
+     --route 21:1, --occ 5.37:1; light --trk 1.68:1, --route 21:1, --occ
+     6.54:1. Unlit track is faint on purpose, as on a real panel. */
+  :root { --trk: #c7c7cc; --route: #000; --occ: #b3261e; --asp-r: #e5484d; --asp-y: #f5d90a; --asp-g: #30a46c; }
+  :root[data-theme="dark"] { --trk: #3a3a3c; --route: #fff; --occ: #e5484d; }
   /* --elev: the command menu's surface, twr's measured values. On a black
      page a black scrim changes nothing, so dark lifts the surface instead
      (ui rules, figure-ground): #57575b is 2.9:1 against black, white text
@@ -312,14 +323,16 @@ window.CABIN = (() => {
 
   // ---- Theme -------------------------------------------------------------
   const themeBtn = el("theme");
-  const colours = {};
   // Canvas colours come from the same custom properties as the DOM, read
-  // once per theme change rather than once per frame.
+  // once per theme change rather than once per frame. Order is the App's
+  // `Palette`.
+  const PALETTE = ["bg", "fg", "dim", "trk", "route", "occ", "asp-r", "asp-y", "asp-g"];
+  let colours = [];
   function applyTheme() {
     document.documentElement.dataset.theme = state.settings.theme;
     themeBtn.textContent = state.settings.theme === "dark" ? "Light" : "Dark";
     const cs = getComputedStyle(document.documentElement);
-    for (const k of ["bg", "fg", "dim", "line"]) colours[k] = cs.getPropertyValue("--" + k).trim();
+    colours = PALETTE.map(k => cs.getPropertyValue("--" + k).trim());
   }
   // A mouse press leaves no focus on the button, so a later key is not a
   // second press.
@@ -349,7 +362,7 @@ window.CABIN = (() => {
 
   // False once the App has thrown; the loop stops and the banner says why.
   function draw(dt) {
-    try { app.frame(dt, dpr, reduce.matches, colours.bg, colours.fg, colours.dim, colours.line); return true; }
+    try { app.frame(dt, dpr, reduce.matches, colours); return true; }
     catch (e) { report("frame", "The panel stopped.", String(e && e.message || e)); return false; }
   }
 
@@ -759,7 +772,7 @@ window.CABIN = (() => {
       return;
     }
     el("attr").textContent = `© OpenStreetMap contributors, extract of ${app.osm_base().slice(0, 10)} · `
-      + `not to scale across the tracks (spacing ×${app.stretch()}) · not for real-world use`;
+      + `schematic · lengths and angles not to scale · not for real-world use`;
     el("seed").textContent = String(app.seed());
     el("speed").textContent = "x" + app.time_scale();
     el("mode").textContent = mode;

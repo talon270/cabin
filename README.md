@@ -2,7 +2,7 @@
 
 A signalling game set at New Delhi station (NDLS), built in Rust and run as
 WebAssembly in one offline HTML file. The yard is OpenStreetMap's track
-geometry (extract of 2026-11-15): 12 portals, 16 platform tracks, 44 signals
+geometry (extract of 2026-11-15), drawn as a control-room schematic: 12 portals, 16 platform tracks, 44 signals
 and 242 routes. The traffic is drawn from the seed at the rates of a 2016
 survey of the station's berthing chart (about 275 trains on a busy day, 22 in
 the 09:00 hour), with 139 real train numbers and names. You accept trains
@@ -20,7 +20,7 @@ Rebuild and check after a change, from `games/cabin/`:
 
 ```sh
 ./build.sh                                                            # dist/index.html
-env CARGO_TARGET_DIR=$HOME/.cache/cabin-target cargo test --release --workspace   # 69 tests, about 3 min
+env CARGO_TARGET_DIR=$HOME/.cache/cabin-target cargo test --release --workspace   # 76 tests, about 3 min
 python3 tools/verify_b8.py /tmp/cabin-shots                           # Playwright, real clicks
 env CARGO_TARGET_DIR=$HOME/.cache/cabin-target cargo run -p cabin-osm  # re-extract after editing data/ndls.overrides.toml
 ./fetch-osm.sh                                                        # refresh data/ndls.osm.json from Overpass; rarely
@@ -32,7 +32,7 @@ extractor) and syncs it. `build.sh` sets it itself.
 
 `build.sh` needs the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` at
 the version in `Cargo.lock` (0.2.130), and `wasm-opt` (binaryen). It checks
-the wasm-bindgen version before it builds. `tools/README.md` lists the four
+the wasm-bindgen version before it builds. `tools/README.md` lists the five
 verify scripts and what each covers. Run `./build.sh` before any of them: a
 script run on an old page proves nothing about the change.
 
@@ -131,9 +131,27 @@ each head takes the place nearest its post, along its own track, that is
 45 px from every other head, and a thin line joins it to the post. The sim
 and the trains still stop at the post. 17 pairs became 0.
 
+**The panel is a schematic, not a map, and it says so.** The first panel
+drew OpenStreetMap's polylines with the cross-track spacing stretched six
+times, so every 1 m survey wobble showed as a bend. Now each through-line
+sits on its own row and changes rows only by a 45° jog, as a control-room
+screen draws it: 67 lines on 33 rows, 0 false crossings
+(`crates/web/src/schematic.rs`, whose tests hold those gates). Track order
+and connections are the yard's; lengths and angles are drawn. The station
+area is at true length, the throats at 0.35, and the whole drawing is 1.88
+times the true 2,256 m, because the jogs need room.
+
+**The indications are Indian Railways', from the manual.** Clear track is
+unlit, a set route is white (path solid, overlap dashed), and occupied track
+is red over any route, as the track-circuit chapter (2023, §17.2.6) and the
+Signal Engineering Manual (§7.172.2) say (`research/panel.md`). A train is
+its lit sections and its number in a describer box, not a block. A point's
+leg that is not lying is broken for 6 px at the switch; that look is
+assumed, because no source says how a panel draws it.
+
 ## What is assumed and what is solid
 
-21 constants are tagged in `crates/sim/src/consts.rs`; 20 are `assumed`. The
+20 constants are tagged in `crates/sim/src/consts.rs`; 19 are `assumed`. The
 "What is real" dialog reads the tags from the build, so it cannot drift from
 the code.
 
@@ -146,6 +164,8 @@ the code.
 | Hourly spread, peak 22 at 09:00 (one 2016 survey, secondary) | 275 trains on a busy day; one third from the north; the type mix | a timetable newer than 2016 |
 | 139 train numbers and names (secondary; 28 unconfirmed) | rake lengths, mostly; terminating dwell 600 to 1200 s | — |
 | — | 30 m fouling length, 180 s block headway, 120 s approach release, 0.3 and 0.5 m/s² | measured fouling marks; NR practice |
+| Panel colours: clear track unlit, set route white, occupied red over any route (`research/panel.md` PN-01 to PN-03, PN-08) | how a point's lie and a signal at danger look on the panel (PN-04 to PN-06); the light theme's darker hues | a photo or drawing of an NDLS panel |
+| Track order and connections on the panel (from the yard) | every drawn length and angle: rows 30 m apart, 45° jogs, throats at 0.35 of true length | — |
 | — | `TIME_SCALE` 4, chosen from the soak: 2.0 route decisions per real minute on average, 2.6 in the peak hour | your play |
 
 ## What is not right yet
@@ -157,6 +177,16 @@ the code.
 - **Delay per train still punishes an ignored offer hardest.** Each train
   waits from its due time, so one left outside all shift adds up to 90 min
   to the total. Per train, it no longer swamps the rest of the score.
+- **At 13 of 75 drawn points, both legs leave the switch on one line.** At
+  6 of them (points 5, 10, 20, 25, 38 and 53) the two legs lie on top of
+  each other for 8 m to 1,088 m, so the lie gap cannot show and a route over
+  either leg looks the same. The schematic layout puts them there; the
+  sim's routes are right. `verify_b9.py` lists them and skips them.
+- **Unlit track is faint by design.** Dark track `#3a3a3c` is 1.85:1 against
+  black; light `#c7c7cc` is 1.68:1 against white. A real panel is dim when
+  clear; whether it is too dim to play is your call.
+- **The 144 yard edges are stubs.** They need 65 rows and form an ordering
+  cycle; no train runs on them.
 - **Platforms 15 and 16 are not worked.** Their only arrivals came from the
   south into berths with no departure, so those routes were removed.
 - **29 of 32 Starters stand inside the 30 m fouling length** of the junction
@@ -167,8 +197,8 @@ the code.
 ## Data, licence, privacy
 
 The track data is © OpenStreetMap contributors (ODbL). The panel's corner
-shows that credit with the extract date, "not to scale across the tracks
-(spacing ×6)" and "not for real-world use". The derived files in `data/`
+shows that credit with the extract date, "schematic · lengths and angles not
+to scale" and "not for real-world use". The derived files in `data/`
 carry the same licence. The traffic research lives in `research/`, one ledger
 row per fact, with its source.
 
@@ -176,7 +206,7 @@ The page stores your theme and your bests, per field and per mode, in
 `localStorage` under `cabin.v1` (schema 2; a schema 1 delay best was a shift total, and the
 migration keeps it under `v1_delay_totals` rather than show it as a per-train best). An unreadable or future-version
 copy is kept under `cabin.v1.corrupt` and a banner says so. It sends nothing
-anywhere. The repo is private and has no remote.
+anywhere. The repo is private on GitHub, `talon270/cabin`.
 
 The build history, every slice's measurements and the open decisions are in
 `PLAN-cabin.md`.

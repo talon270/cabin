@@ -1,8 +1,7 @@
 //! CABIN-WEB · BROWSER SHELL
 //!   · App: the wasm object the page drives, one per canvas; it owns the
 //!     sim `World` and steps it TIME_SCALE times real time
-//!   · Panel: the yard turned to its long axis, track spacing stretched by
-//!     PANEL_STRETCH about a measured centreline
+//!   · Schematic: the yard's track connections drawn as rows and 45° jogs
 //!   · Camera: pan 1:1, rubber band past the yard's edges, zoom on a spring
 //!     about the cursor; the default view frames the platforms
 //!   · controls: click an entry signal, then an exit; the route is
@@ -15,14 +14,17 @@
 //! JavaScript, draw calls go out to a Canvas 2D context. No game rule lives
 //! here; if it would matter in a headless test, it belongs in `cabin-sim`.
 
-use cabin_sim::consts::{PANEL_STRETCH, SHIFT_LEN_S, SHIFT_START_S, TICK_HZ, TIME_SCALE};
+use cabin_sim::consts::{SHIFT_LEN_S, SHIFT_START_S, TICK_HZ, TIME_SCALE};
 use cabin_sim::interlock::Aspect;
-use cabin_sim::route::{Exit, Res, RouteId, SignalId};
+use cabin_sim::route::{Exit, Lie, Res, RouteId, SignalId};
 use cabin_sim::traffic::{Mode, NDLS_TRAFFIC, Profile};
 use cabin_sim::yard::{Kind, SignalKind, Yard};
 use cabin_sim::{Action, World};
+use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
+
+mod schematic;
 
 /// Zoom limits in CSS px per panel metre. 0.1 shows the 2.3 km yard in
 /// 230 px; 10 puts two neighbouring platform tracks 400 px apart.
@@ -42,16 +44,6 @@ const EDGE_C: f64 = 2.0 * 17.320_508; // 2 * sqrt(k): critical
 /// The default view frames the running lines at this share of the canvas.
 const FIT_SHARE: f64 = 0.92;
 
-/// Panel centreline: running track is sampled every SAMPLE_M, binned every
-/// BIN_M along the long axis, and the median across-track offset of each bin
-/// is smoothed over SMOOTH_BINS either side. Drawn shapes are cut into
-/// pieces no longer than DENSIFY_M before mapping, so a long straight track
-/// bends with the centreline and never crosses its neighbour on screen.
-const SAMPLE_M: f64 = 10.0;
-const BIN_M: f64 = 50.0;
-const SMOOTH_BINS: usize = 2;
-const DENSIFY_M: f64 = 25.0;
-
 /// Hit slop (UI card No. 12): a click picks the nearest target within
 /// this many CSS px, so each target is 44 px across while drawn small.
 const HIT_PX: f64 = 22.0;
@@ -67,137 +59,42 @@ const HEAD_R_PX: f64 = 4.5;
 const HEAD_GAP_PX: f64 = 45.0;
 const HEAD_STEP_M: f64 = 2.0;
 const HEAD_PASSES: usize = 4;
+/// A point's leg that is not lying is broken for this many CSS px from the
+/// switch (research/panel.md PN-04, PN-05: assumed). Cut out of the stroke,
+/// not painted over, so the gap never eats the leg that lies.
+const LIE_GAP_PX: f64 = 6.0;
+
+/// The panel's colours, in the order the page reads them from CSS custom
+/// properties (`PALETTE` in web/shell.html). This file names no colour:
+/// both themes, the indications and the aspects all come from the page.
+struct Palette {
+    bg: String,
+    fg: String,
+    dim: String,
+    /// Track, unlit when clear (PN-01).
+    trk: String,
+    /// A set and locked route (PN-02, PN-08).
+    route: String,
+    /// Occupied track, over any route (PN-03).
+    occ: String,
+    /// Signal aspects: red, yellow, green.
+    asp: [String; 3],
+}
+
+impl Palette {
+    fn new(p: Vec<String>) -> Result<Palette, JsValue> {
+        let Ok([bg, fg, dim, trk, route, occ, r, y, g]) = <[String; 9]>::try_from(p) else {
+            return Err(JsValue::from_str("palette: expected 9 colours: bg fg dim trk route occ asp-r asp-y asp-g"));
+        };
+        Ok(Palette { bg, fg, dim, trk, route, occ, asp: [r, y, g] })
+    }
+}
+
+fn poly_len(poly: &[(f64, f64)]) -> f64 {
+    poly.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum()
+}
 /// A place on the panel and the unit direction faced there.
 type Place = ((f64, f64), (f64, f64));
-
-/// The yard drawn as a control panel: `u` along the station's long axis,
-/// `v` across it. Distances along the tracks are true; the spacing between
-/// tracks is PANEL_STRETCH times true, measured from a centreline that
-/// follows the line's curve. Stretching about a straight axis would stretch
-/// the curve as well: the south lines bend 425 m off the axis, and a
-/// straight 6x stretch made the panel 3.3 km tall for a 2.3 km yard.
-pub struct Panel {
-    ox: f64,
-    oy: f64,
-    cos: f64,
-    sin: f64,
-    /// `u` of the first bin's centre, and the smoothed centreline per bin.
-    u0: f64,
-    centre: Vec<f64>,
-}
-
-impl Panel {
-    pub fn new(yard: &Yard) -> Panel {
-        // The long axis is the direction the platform tracks run: the
-        // length-weighted mean of their segments' directions, on doubled
-        // angles so a segment drawn either way counts the same. Not the
-        // principal axis of their points: P1-P6 sit about 400 m along from
-        // P7-P16, and that stagger tilted the principal axis 5 degrees off
-        // the tracks (-76.6 against -81.5), which the stretch turned into
-        // platforms drawn as steep diagonals.
-        let plat: Vec<&[(f64, f64)]> = yard.platforms.iter().map(|p| yard.edges[p.edge].poly.as_slice()).collect();
-        let n = plat.iter().map(|s| s.len()).sum::<usize>().max(1) as f64;
-        let ox = plat.iter().flat_map(|s| s.iter()).map(|p| p.0).sum::<f64>() / n;
-        let oy = plat.iter().flat_map(|s| s.iter()).map(|p| p.1).sum::<f64>() / n;
-        let (mut c2, mut s2) = (0.0, 0.0);
-        for w in plat.iter().flat_map(|s| s.windows(2)) {
-            let (dx, dy) = (w[1].0 - w[0].0, w[1].1 - w[0].1);
-            let (len, phi) = (dx.hypot(dy), dy.atan2(dx));
-            c2 += len * (2.0 * phi).cos();
-            s2 += len * (2.0 * phi).sin();
-        }
-        let th = 0.5 * s2.atan2(c2);
-        let mut p = Panel { ox, oy, cos: th.cos(), sin: th.sin(), u0: 0.0, centre: Vec::new() };
-
-        let mut samples: Vec<(f64, f64)> = Vec::new();
-        for e in yard.edges.iter().filter(|e| e.kind == Kind::Running) {
-            samples.extend(densify(&e.poly, SAMPLE_M).into_iter().map(|(x, y)| p.rotate(x, y)));
-        }
-        if samples.is_empty() {
-            return p;
-        }
-        let umin = samples.iter().map(|s| s.0).fold(f64::MAX, f64::min);
-        let umax = samples.iter().map(|s| s.0).fold(f64::MIN, f64::max);
-        let bins = ((umax - umin) / BIN_M).floor() as usize + 1;
-        let mut by_bin: Vec<Vec<f64>> = vec![Vec::new(); bins];
-        for &(u, v) in &samples {
-            by_bin[(((u - umin) / BIN_M) as usize).min(bins - 1)].push(v);
-        }
-        let mut med: Vec<Option<f64>> = by_bin
-            .into_iter()
-            .map(|mut vs| {
-                vs.sort_by(f64::total_cmp);
-                (!vs.is_empty()).then(|| vs[vs.len() / 2])
-            })
-            .collect();
-        // A bin with no running track takes its nearest filled neighbour.
-        for i in 0..bins {
-            if med[i].is_none() {
-                let near = (1..bins).find_map(|d| {
-                    let lo = i.checked_sub(d).and_then(|j| med[j]);
-                    lo.or_else(|| med.get(i + d).copied().flatten())
-                });
-                med[i] = near;
-            }
-        }
-        let med: Vec<f64> = med.into_iter().map(|m| m.unwrap_or(0.0)).collect();
-        p.centre = (0..bins)
-            .map(|i| {
-                let (a, b) = (i.saturating_sub(SMOOTH_BINS), (i + SMOOTH_BINS).min(bins - 1));
-                med[a..=b].iter().sum::<f64>() / (b - a + 1) as f64
-            })
-            .collect();
-        p.u0 = umin + BIN_M / 2.0;
-        p
-    }
-
-    /// Turn to the long axis, true scale. A rotation, never a mirror: the
-    /// panel keeps the yard's handedness.
-    fn rotate(&self, x: f64, y: f64) -> (f64, f64) {
-        let (dx, dy) = (x - self.ox, y - self.oy);
-        (dx * self.cos + dy * self.sin, -dx * self.sin + dy * self.cos)
-    }
-
-    fn centre_v(&self, u: f64) -> f64 {
-        let c = &self.centre;
-        if c.is_empty() {
-            return 0.0;
-        }
-        let t = ((u - self.u0) / BIN_M).clamp(0.0, (c.len() - 1) as f64);
-        let i = (t.floor() as usize).min(c.len() - 1);
-        let j = (i + 1).min(c.len() - 1);
-        c[i] + (c[j] - c[i]) * (t - i as f64)
-    }
-
-    /// World metres (east, north) to panel metres. For a fixed `u` the map
-    /// is increasing in `v`, so tracks keep their order and never cross on
-    /// screen where they do not cross on the ground.
-    pub fn map(&self, x: f64, y: f64) -> (f64, f64) {
-        let (u, v) = self.rotate(x, y);
-        let c = self.centre_v(u);
-        (u, c + PANEL_STRETCH * (v - c))
-    }
-
-    pub fn map_poly(&self, poly: &[(f64, f64)]) -> Vec<(f64, f64)> {
-        densify(poly, DENSIFY_M).into_iter().map(|(x, y)| self.map(x, y)).collect()
-    }
-}
-
-/// The same polyline with extra vertices, no piece longer than `step`.
-fn densify(poly: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
-    let mut out = Vec::with_capacity(poly.len());
-    for (k, &b) in poly.iter().enumerate() {
-        if let Some(&a) = k.checked_sub(1).and_then(|j| poly.get(j)) {
-            let pieces = ((b.0 - a.0).hypot(b.1 - a.1) / step).ceil().max(1.0) as usize;
-            for i in 1..pieces {
-                let t = i as f64 / pieces as f64;
-                out.push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
-            }
-        }
-        out.push(b);
-    }
-    out
-}
 
 /// The point `m` metres along `poly` from its first vertex, and the unit
 /// direction there, with the edge's stated length `len` mapped onto the
@@ -295,7 +192,7 @@ fn install_panic_hook() {
 pub struct App {
     world: World,
     seed: u32,
-    panel: Panel,
+    schematic: schematic::Schematic,
     /// Each edge's shape in panel metres, mapped once at load.
     shapes: Vec<Vec<(f64, f64)>>,
     /// Panel bounds of everything drawn, and of the platform tracks.
@@ -384,8 +281,8 @@ impl App {
             .ok_or_else(|| JsValue::from_str("2d context unavailable"))?
             .dyn_into()?;
         let yard = Yard::parse(cabin_sim::NDLS).map_err(|e| JsValue::from_str(&format!("data/ndls.yard: {}", e.0)))?;
-        let panel = Panel::new(&yard);
-        let shapes: Vec<Vec<(f64, f64)>> = yard.edges.iter().map(|e| panel.map_poly(&e.poly)).collect();
+        let schematic = schematic::Schematic::new(&yard);
+        let shapes = schematic.shape.clone();
         let all = bounds(shapes.iter().flatten());
         let platforms = bounds(yard.platforms.iter().flat_map(|p| &shapes[p.edge]));
         let sig_path: Vec<Vec<_>> = yard
@@ -398,11 +295,9 @@ impl App {
                 let back = if s.forward { -HEAD_STEP_M } else { HEAD_STEP_M };
                 (0..=(room.max(0.0) / HEAD_STEP_M) as usize)
                     .map(|k| {
-                        let (p, d) = at_metres(&e.poly, e.len, s.offset + back * k as f64);
+                        let (p, d) = at_metres(&shapes[s.edge], e.len, s.offset + back * k as f64);
                         let d = if s.forward { d } else { (-d.0, -d.1) };
-                        let (a, b) = (panel.map(p.0, p.1), panel.map(p.0 + d.0, p.1 + d.1));
-                        let n = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
-                        (a, ((b.0 - a.0) / n, (b.1 - a.1) / n))
+                        (p, d)
                     })
                     .collect()
             })
@@ -417,7 +312,7 @@ impl App {
         Ok(App {
             world,
             seed,
-            panel,
+            schematic,
             shapes,
             all,
             platforms,
@@ -441,10 +336,10 @@ impl App {
     }
 
     /// One animation frame: step the sim by `real_ms` at TIME_SCALE, run
-    /// the camera springs, draw. Colours come from the page's CSS custom
-    /// properties, so both themes are drawn by the same code.
-    #[allow(clippy::too_many_arguments)]
-    pub fn frame(&mut self, real_ms: f64, dpr: f64, reduce: bool, bg: &str, fg: &str, dim: &str, line: &str) {
+    /// the camera springs, draw. `palette` is the page's CSS custom
+    /// properties, see `Palette`, so both themes are drawn by the same code.
+    pub fn frame(&mut self, real_ms: f64, dpr: f64, reduce: bool, palette: Vec<String>) -> Result<(), JsValue> {
+        let pal = Palette::new(palette)?;
         self.dpr = dpr;
         self.w = f64::from(self.canvas.width()) / dpr;
         self.h = f64::from(self.canvas.height()) / dpr;
@@ -460,7 +355,8 @@ impl App {
             self.world.step_ticks(n as u32);
         }
         self.spring(dt, reduce);
-        self.draw(bg, fg, dim, line);
+        self.draw(&pal);
+        Ok(())
     }
 
     pub fn osm_base(&self) -> String {
@@ -486,7 +382,9 @@ impl App {
             ("Aspects", "assumed", "Red with no route, yellow when the exit signal is red, green otherwise. The ledger does not settle a Starter's off aspect.".to_string()),
             ("Traffic", "secondary", format!("About {p} trains on a busy day, from a 2016 survey of the station's berthing chart (AG18) and the datameet 2016 timetable, read {written}. No figure is from Indian Railways. The {pool} train numbers and names are real; their times are drawn from the seed.")),
             ("Score and shift", "assumed", "Three plain numbers, never blended. The shift length, its start and the mode fractions were chosen by you on 2026-11-18; see the constants below.".to_string()),
-            ("Panel", "schematic", format!("Not to scale across the tracks: spacing x{PANEL_STRETCH}.")),
+            ("Panel", "schematic", "Track order and connections are the yard's; lengths and angles are drawn, not measured.".to_string()),
+            ("Indications", "primary", "Clear track unlit, a set and locked route white, occupied track red over any route: the Indian Railways track-circuit chapter (2023) section 17.2.6 and Signal Engineering Manual section 7.172.2 (research/panel.md PN-01 to PN-03, PN-08). On the light theme the route is black.".to_string()),
+            ("Point lie", "assumed", "A point's leg that is not lying is drawn broken at the switch. A real panel shows the lie, but how it looks was not found (PN-04, PN-05).".to_string()),
         ]
         .into_iter()
         .map(|(a, b, c)| format!("{a}\t{b}\t{c}"))
@@ -500,10 +398,6 @@ impl App {
 
     pub fn seed(&self) -> u32 {
         self.seed
-    }
-
-    pub fn stretch(&self) -> f64 {
-        PANEL_STRETCH
     }
 
     pub fn time_scale(&self) -> f64 {
@@ -857,6 +751,66 @@ impl App {
         w.lock.routes().iter().find(|r| w.yard.signals[r.entry].name == entry && w.exit_name(r.exit) == exit).map_or(-1, |r| r.id as i32)
     }
 
+    /// Test hook, read-only: route `id`'s path edges as drawn, in CSS px,
+    /// `x, y` pairs with NaN, NaN between edges. verify_b9 samples the
+    /// canvas along them to prove the drawn route has no gap.
+    pub fn route_screen(&self, id: usize) -> Vec<f64> {
+        let Some(route) = self.world.lock.routes().get(id) else { return Vec::new() };
+        let mut out = Vec::new();
+        for &e in &route.path {
+            for &(u, v) in &self.shapes[e] {
+                let (x, y) = self.to_screen(u, v);
+                out.extend([x, y]);
+            }
+            out.extend([f64::NAN, f64::NAN]);
+        }
+        out
+    }
+
+    /// Test hook, read-only: the middle of each occupied edge as drawn, CSS
+    /// px, `x, y` pairs. verify_b9 reads the occupied colour there.
+    pub fn occupied_screen(&self) -> Vec<f64> {
+        let occ = self.world.occupancy();
+        let edges: HashSet<usize> = occ.bodies.values().flat_map(|b| b.spans.iter().map(|s| s.edge)).collect();
+        let mut out = Vec::new();
+        for e in edges {
+            let s = &self.shapes[e];
+            if s.len() < 2 {
+                continue;
+            }
+            let t = poly_len(s);
+            let ((u, v), _) = at_metres(s, t, t / 2.0);
+            let (x, y) = self.to_screen(u, v);
+            out.extend([x, y]);
+        }
+        out
+    }
+
+    /// Test hook, read-only: per drawn point, its index, then the place
+    /// `px` CSS px from its switch along the leg not lying, then along the
+    /// leg lying: five numbers.
+    /// Points with a leg drawn shorter than twice `px` are left out.
+    pub fn lie_screen(&self, px: f64) -> Vec<f64> {
+        let y = &self.world.yard;
+        let m = px / self.cam.scale();
+        let mut out = Vec::new();
+        for (k, p) in y.points.iter().enumerate() {
+            let (off, on) = if self.world.lie(k) == Lie::Normal { (p.reverse, p.normal) } else { (p.normal, p.reverse) };
+            let at = |e: usize| {
+                let s = &self.shapes[e];
+                let t = poly_len(s);
+                (s.len() >= 2 && t >= 2.0 * m).then(|| {
+                    let ((u, v), _) = at_metres(s, t, if y.edges[e].a == p.node { m } else { t - m });
+                    self.to_screen(u, v)
+                })
+            };
+            if let (Some(a), Some(b)) = (at(off), at(on)) {
+                out.extend([k as f64, a.0, a.1, b.0, b.1]);
+            }
+        }
+        out
+    }
+
     /// Test hook: run `game_s` of game time at once, as the frame loop
     /// would over many frames. It steps the same sim; it changes no rule.
     pub fn skip(&mut self, game_s: f64) {
@@ -947,8 +901,8 @@ impl App {
     }
 
     fn portal_xy(&self, p: usize) -> (f64, f64) {
-        let n = &self.world.yard.nodes[self.world.yard.portals[p].node];
-        let (u, v) = self.panel.map(n.x, n.y);
+        let (u, v) = self.schematic.node[self.world.yard.portals[p].node]
+            .expect("a portal is attached to a drawn track");
         self.to_screen(u, v)
     }
 
@@ -988,8 +942,7 @@ impl App {
     }
 
     /// The default view frames the platform tracks, once, when the canvas
-    /// size is first known: you chose a closer view over a larger stretch
-    /// on 2026-11-17, and pan to see the throats.
+    /// size is first known; pan to see the throats beyond the platform view.
     fn fit(&mut self) {
         let (u0, u1, v0, v1) = self.platforms;
         self.cam.cx = (u0 + u1) / 2.0;
@@ -1077,13 +1030,12 @@ impl App {
         self.ctx.stroke();
     }
 
-    /// Rule A7: red, yellow and green are signal aspects and appear nowhere
-    /// else; this is the only function that names them. Each head also has
-    /// an ink outline, so yellow on the light theme still reads as a shape.
-    fn draw_heads(&self, fg: &str) {
+    /// Aspect colours come from the palette. Each head has an ink outline,
+    /// so yellow on the light theme still reads as a shape.
+    fn draw_heads(&self, p: &Palette) {
         let ctx = &self.ctx;
         ctx.set_line_width(1.0);
-        ctx.set_stroke_style_str(fg);
+        ctx.set_stroke_style_str(&p.fg);
         for s in 0..self.sig_path.len() {
             let (x, y) = self.head_screen(s);
             // A head slid back from a crowded post: a stalk to the post.
@@ -1095,9 +1047,9 @@ impl App {
                 ctx.stroke();
             }
             ctx.set_fill_style_str(match self.world.aspect(s) {
-                Aspect::Red => "#e5484d",
-                Aspect::Yellow | Aspect::DoubleYellow => "#f5d90a",
-                Aspect::Green => "#30a46c",
+                Aspect::Red => &p.asp[0],
+                Aspect::Yellow | Aspect::DoubleYellow => &p.asp[1],
+                Aspect::Green => &p.asp[2],
             });
             ctx.begin_path();
             let _ = ctx.arc(x, y, HEAD_R_PX, 0.0, std::f64::consts::TAU);
@@ -1106,72 +1058,117 @@ impl App {
         }
     }
 
-    /// Ink only, except the heads. Running track dim, yard and siding track
-    /// dimmer, a set route bright, the route under the pointer dashed.
-    fn draw(&self, bg: &str, fg: &str, dim: &str, line: &str) {
+    /// Where each edge's stroke is cut short, CSS px at its `a` and `b`
+    /// ends: the leg of each point that is not lying, at the switch.
+    fn lie_cuts(&self) -> Vec<(f64, f64)> {
+        let y = &self.world.yard;
+        let mut cut = vec![(0.0, 0.0); y.edges.len()];
+        for (k, p) in y.points.iter().enumerate() {
+            let off = if self.world.lie(k) == Lie::Normal { p.reverse } else { p.normal };
+            if y.edges[off].a == p.node {
+                cut[off].0 = LIE_GAP_PX;
+            } else {
+                cut[off].1 = LIE_GAP_PX;
+            }
+        }
+        cut
+    }
+
+    /// The Indian Railways panel convention (research/panel.md): clear track
+    /// unlit, a set route in the route colour (path solid, overlap dashed),
+    /// occupied track sections red over any route, each train's number in a
+    /// describer box. Draw order is that override order.
+    fn draw(&self, p: &Palette) {
         let ctx = &self.ctx;
         let w = &self.world;
         let y = &w.yard;
         let _ = ctx.set_transform(self.dpr, 0.0, 0.0, self.dpr, 0.0, 0.0);
-        ctx.set_fill_style_str(bg);
+        ctx.set_fill_style_str(&p.bg);
         ctx.fill_rect(0.0, 0.0, self.w, self.h);
         ctx.set_line_cap("round");
         ctx.set_line_join("round");
+        let scale = self.cam.scale();
+        let cuts = self.lie_cuts();
+        ctx.set_stroke_style_str(&p.trk);
         for pass in [false, true] {
-            ctx.set_stroke_style_str(if pass { dim } else { line });
             ctx.set_line_width(if pass { 2.0 } else { 1.0 });
-            for (e, s) in y.edges.iter().zip(&self.shapes) {
-                if (e.kind == Kind::Running) == pass {
+            for ((e, s), &(c0, c1)) in y.edges.iter().zip(&self.shapes).zip(&cuts) {
+                if (e.kind == Kind::Running) != pass || s.len() < 2 {
+                    continue;
+                }
+                if c0 == 0.0 && c1 == 0.0 {
                     self.stroke(s);
+                } else {
+                    let t = poly_len(s);
+                    let (lo, hi) = (c0 / scale, t - c1 / scale);
+                    if hi > lo {
+                        self.stroke(&piece(s, t, lo, hi));
+                    }
                 }
             }
         }
-        ctx.set_stroke_style_str(fg);
+        ctx.set_line_width(1.0);
+        for stub in &self.schematic.stubs {
+            self.stroke(stub);
+        }
+
+        // Set routes: what the interlocking holds, solid where it is a live
+        // route's path, dashed where it is only an overlap.
+        let path: HashSet<usize> = w.lock.live().into_iter().flat_map(|r| w.lock.routes()[r].path.iter().copied()).collect();
+        ctx.set_stroke_style_str(&p.route);
         ctx.set_line_width(3.0);
-        for (k, s) in self.shapes.iter().enumerate() {
-            if w.lock.held(Res::Edge(k)) {
-                self.stroke(s);
+        for dashed in [false, true] {
+            if dashed {
+                let _ = ctx.set_line_dash(&js_sys::Array::of2(&JsValue::from(2.0), &JsValue::from(5.0)));
+            }
+            for (k, s) in self.shapes.iter().enumerate() {
+                if w.lock.held(Res::Edge(k)) && path.contains(&k) != dashed {
+                    self.stroke(s);
+                }
             }
         }
         if let Some(r) = self.preview {
             let route = &w.lock.routes()[r];
             let _ = ctx.set_line_dash(&js_sys::Array::of2(&JsValue::from(6.0), &JsValue::from(5.0)));
-            ctx.set_line_width(3.0);
             for &e in route.path.iter().chain(&route.overlap) {
                 self.stroke(&self.shapes[e]);
             }
-            let _ = ctx.set_line_dash(&js_sys::Array::new());
+        }
+        let _ = ctx.set_line_dash(&js_sys::Array::new());
+
+        // Occupied: the whole track section, red over any route (PN-03).
+        let occ = w.occupancy();
+        let held: HashSet<usize> = occ.bodies.values().flat_map(|b| b.spans.iter().map(|s| s.edge)).collect();
+        ctx.set_stroke_style_str(&p.occ);
+        for &e in &held {
+            self.stroke(&self.shapes[e]);
         }
 
-        // Trains: a solid block with its name, ink only.
-        ctx.set_line_cap("butt");
-        ctx.set_line_width(7.0);
+        // Describers: each train's number boxed above its head.
         ctx.set_font("700 11px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
         ctx.set_text_align("center");
         ctx.set_text_baseline("middle");
-        ctx.set_fill_style_str(fg);
-        let occ = w.occupancy();
+        ctx.set_line_width(1.0);
         for (&id, b) in &occ.bodies {
-            let mut head = None;
-            for sp in &b.spans {
-                let e = &y.edges[sp.edge];
-                let body = self.panel.map_poly(&piece(&e.poly, e.len, sp.lo, sp.hi));
-                self.stroke(&body);
-                if sp.edge == b.head.0 {
-                    let near_b = (sp.hi - b.head.1).abs() < (sp.lo - b.head.1).abs();
-                    head = Some(if near_b { body[body.len() - 1] } else { body[0] });
-                }
-            }
-            if let Some((u, v)) = head {
-                let (x, yy) = self.to_screen(u, v);
-                let _ = ctx.fill_text(&w.train_name(id), x, yy - 14.0);
-            }
+            let e = &y.edges[b.head.0];
+            let ((u, v), _) = at_metres(&self.shapes[b.head.0], e.len, b.head.1);
+            let (x, yy) = self.to_screen(u, v);
+            let name = w.train_name(id);
+            // Monospace: 0.6 em a character, so no text measuring is needed.
+            let half = name.chars().count() as f64 * 6.6 / 2.0 + 4.0;
+            let top = yy - 24.0;
+            ctx.set_fill_style_str(&p.bg);
+            ctx.fill_rect(x - half, top, 2.0 * half, 15.0);
+            ctx.set_stroke_style_str(&p.route);
+            ctx.stroke_rect(x - half, top, 2.0 * half, 15.0);
+            ctx.set_fill_style_str(&p.route);
+            let _ = ctx.fill_text(&name, x, top + 8.0);
         }
 
         // Choice: the entry ringed solid, its exits ringed dashed, the one
         // under the pointer ringed solid.
         if let Some(s) = self.sel {
-            ctx.set_stroke_style_str(fg);
+            ctx.set_stroke_style_str(&p.fg);
             ctx.set_line_width(2.0);
             let (x, yy) = self.head_screen(s);
             self.ring(x, yy, HIT_PX / 2.0);
@@ -1188,21 +1185,24 @@ impl App {
                 self.ring(x, yy, HIT_PX / 2.0);
             }
         }
-        self.draw_heads(fg);
+        self.draw_heads(p);
 
         ctx.set_font("11px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
-        ctx.set_fill_style_str(dim);
+        ctx.set_fill_style_str(&p.dim);
+        // Mid flat run, not mid vertex: a jogging platform's middle vertex is
+        // its jog corner, where the Starter's head and name already sit.
         for p in &y.platforms {
             let s = &self.shapes[p.edge];
-            let (x, yy) = self.to_screen(s[s.len() / 2].0, s[s.len() / 2].1);
+            let Some(run) = s.windows(2).filter(|w| w[0].1 == w[1].1)
+                .max_by(|a, b| (a[1].0 - a[0].0).abs().total_cmp(&(b[1].0 - b[0].0).abs())) else { continue };
+            let (x, yy) = self.to_screen((run[0].0 + run[1].0) / 2.0, run[0].1);
             let _ = ctx.fill_text(&format!("P{}", p.name), x, yy - 9.0);
         }
         for (k, p) in y.portals.iter().enumerate() {
             let (x, yy) = self.portal_xy(k);
-            let n = &y.nodes[p.node];
             // North portals sit at the left end, south at the right; the
             // label goes outside the yard.
-            let u = self.panel.map(n.x, n.y).0;
+            let u = self.schematic.node[p.node].expect("portal node is drawn").0;
             let dx = if u < (self.all.0 + self.all.1) / 2.0 { -18.0 } else { 18.0 };
             let _ = ctx.fill_text(&p.name, x + dx, yy);
         }
@@ -1220,10 +1220,6 @@ impl App {
 mod tests {
     use super::*;
 
-    fn ndls() -> Yard {
-        Yard::parse(cabin_sim::NDLS).expect("baked yard parses")
-    }
-
     /// The panel lists every constant, with the value and tag the source has.
     #[test]
     fn the_panel_lists_every_constant_with_its_tag() {
@@ -1235,34 +1231,6 @@ mod tests {
         assert_eq!(f("SHIFT_START_S")[1..3], ["6 * 3600 + 1800", "assumed"]);
         assert!(f("TIME_SCALE")[3].starts_with("game seconds per real second"));
         assert!(rows.iter().all(|r| r.split('\t').count() == 4 && ["solid", "assumed"].contains(&r.split('\t').nth(2).unwrap())));
-    }
-
-    #[test]
-    fn panel_keeps_track_order_and_lays_the_station_along_u() {
-        let y = ndls();
-        let p = Panel::new(&y);
-        // Monotonic across: for a fixed u, a point further left of the axis
-        // maps further up. Checked on a grid over the whole extract.
-        for ui in -60..=60 {
-            let u = f64::from(ui) * 25.0;
-            let mut last = f64::MIN;
-            for vi in -40..=40 {
-                let v = f64::from(vi) * 15.0;
-                let (x, yy) = (p.ox + u * p.cos - v * p.sin, p.oy + u * p.sin + v * p.cos);
-                let (mu, mv) = p.map(x, yy);
-                assert!((mu - u).abs() < 1e-6, "u is true scale");
-                assert!(mv > last, "order kept at u={u}, v={v}");
-                last = mv;
-            }
-        }
-        // Platforms run along u before the stretch. A platform's edge runs on
-        // into the throat, where the tracks fan out (P16 drifts 81 m across
-        // in 525 m), so the bound is loose: within about 11 degrees.
-        for pl in &y.platforms {
-            let s = &y.edges[pl.edge].poly;
-            let (a, b) = (p.rotate(s[0].0, s[0].1), p.rotate(s[s.len() - 1].0, s[s.len() - 1].1));
-            assert!((b.1 - a.1).abs() < 0.2 * (b.0 - a.0).abs(), "platform {} lies along the axis", pl.name);
-        }
     }
 
     #[test]

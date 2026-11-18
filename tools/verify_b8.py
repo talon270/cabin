@@ -39,7 +39,7 @@ OUT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 OUT.mkdir(parents=True, exist_ok=True)
 VIEW = {"width": 1920, "height": 1080}
 SHIFT_S = 90 * 60
-ASPECTS = ["#e5484d", "#f5d90a", "#30a46c"]
+ASPECTS = ["#e5484d", "#f5d90a", "#30a46c", "#b3261e"]  # aspects, and occupied on light
 ENV = {**os.environ, "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", str(pathlib.Path.home() / ".cache/cabin-target"))}
 results: list[tuple[bool, str]] = []
 
@@ -213,7 +213,7 @@ def bad_seed_and_real(b) -> None:
         shown = pg.locator("#layers tr").count()
         consts = pg.locator("#consts tr").count()
         n_src = sum(1 for l in (ROOT / "crates/sim/src/consts.rs").read_text().splitlines() if l.lstrip().startswith("pub const"))
-        check(shown == len(layers) == 12 and consts == n_src, f"{scheme}: 12 layers and all {n_src} constants listed ({shown}, {consts})")
+        check(shown == len(layers) == 14 and consts == n_src, f"{scheme}: 14 layers and all {n_src} constants listed ({shown}, {consts})")
         tags = pg.locator("#consts .tag").all_inner_texts()
         check(set(t.lower() for t in tags) == {"solid", "assumed"}, f"{scheme}: every constant is tagged solid or assumed ({sum(t.lower() == 'assumed' for t in tags)} assumed)")
         body = text(pg, "#real")
@@ -311,18 +311,22 @@ def frame_time(b) -> None:
 # ---- Static checks -----------------------------------------------------------
 
 def colour_rule() -> None:
-    """Red, yellow and green appear in the signal-head function only."""
+    """Red, yellow and green are named in the panel palette block of
+    web/shell.html only: as `--occ` and `--asp-*` values. lib.rs names no
+    colour at all; the canvas reads every colour from the page."""
     shell = (ROOT / "web/shell.html").read_text()
     page = (ROOT / "dist/index.html").read_text()
     page_text = re.sub(r'CABIN\.boot\("[^"]*"\)', "", page)
-    hits = [h for h in ASPECTS if h in shell.lower() or h in page_text.lower()]
+    palette = re.compile(r"--(?:trk|route|occ|asp-[ryg])\s*:\s*#[0-9a-f]{3,6}\s*;", re.I)
+    declared = palette.findall(shell)
+    rest = palette.sub("", shell).lower() + palette.sub("", page_text).lower()
+    hits = [h for h in ASPECTS if h in rest]
     # Named colours in a colour declaration; comments may say "red".
     named = re.findall(r"(?:color|background|fill|stroke|border[\w-]*)\s*:\s*[^;}]*\b(red|yellow|green|lime|orange)\b", shell + page_text, re.I)
     src = (ROOT / "crates/web/src/lib.rs").read_text().splitlines()
-    start = next(i for i, l in enumerate(src) if "fn draw_heads" in l)
-    end = next(i for i in range(start + 1, len(src)) if src[i].startswith("    fn ") or src[i].startswith("    pub fn "))
-    outside = [i + 1 for i, l in enumerate(src) if any(h in l.lower() for h in ASPECTS) and not start <= i < end]
-    check(not hits and not named and not outside, f"colour rule: aspect colours outside draw_heads: page {hits + named}, lib.rs lines {outside}")
+    outside = [i + 1 for i, l in enumerate(src) if re.search(r'"#[0-9a-f]{3,8}"|\brgba?\(', l, re.I)]
+    check(len(declared) == 9 and not hits and not named and not outside,
+          f"colour rule: aspect and indication colours only in the palette block ({len(declared)} declarations): page {hits + named}, lib.rs colour literals on lines {outside}")
 
 
 # ---- Tool edges --------------------------------------------------------------
