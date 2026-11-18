@@ -12,12 +12,13 @@
     No. 03, logic copied from design-catalogue/ui-tips.html)
   · what is real: a dialog listing each layer's source, tag and date, and
     every sim constant with its tag, read from the build
-  · keys: Space pause, Esc clear, Delete cancel the chosen route, T theme
+  · keys: Space pause, Esc clear, Delete cancel the chosen route
   · shift: `?mode=&seed=` picks and replays one; the header shows the three
     numbers and each mode's bests; at the end the page pauses and saves
     any best, merged per field with what another tab saved
-  · theme tokens: Nothing OS Classic, light and dark (md/designs.md), with
-    twr's measured dark contrast values
+  · look: a control-room wall (PLAN-look.md), dark only: lit track, an LED
+    clock and a dot-matrix board drawn here, no font; the controls keep
+    Nothing OS Classic with twr's measured dark contrast values
   · storage: one key, `cabin.v1`, integer schema version, migration hook;
     an unreadable copy is kept under `cabin.v1.corrupt` (Guard 3)
   · boot: decode the inlined wasm, start the frame loop
@@ -26,47 +27,35 @@
   build.sh replaces the BUNDLE marker below with the wasm-bindgen glue and the
   base64 wasm, so the finished page opens from file:// with no fetch.
 -->
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cabin</title>
-<script>
-  // Pick the theme before the first paint, so a saved-light page never
-  // flashes dark. Saved choice first, else the system's. boot() applies the
-  // same rule again through the store, with migrations.
-  try {
-    const s = JSON.parse(localStorage.getItem("cabin.v1") || "null");
-    const t = s && s.settings && s.settings.theme;
-    document.documentElement.dataset.theme = t === "light" || t === "dark" ? t
-      : matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  } catch (e) { /* unreadable store: boot() reports it; keep the markup default */ }
-</script>
 <style>
-  /* Nothing OS Classic, sourcing weak (tagged `blog` in designs.md). Its red
-     is dropped (plan A7): red, yellow and green appear only in the panel
-     palette block below, as indications and signal aspects.
-     Dark values are twr's, measured against #000 on 2026-11-11: --hair
+  /* Nothing OS Classic for the controls, dark only (PLAN-look.md, you chose
+     2026-11-19). Its red is dropped (plan A7): red, yellow and green appear
+     only in the panel palette block below.
+     Values are twr's, measured against #000 on 2026-11-11: --hair
      3.91:1, --line 3.07:1, --dim 9.28:1; the designs.md #2a2a2c line is
      1.47:1 and vanishes on black. Fonts are named: on this machine the
      generic sans-serif resolves to JetBrains Mono. */
   :root { --sans: "Liberation Sans", Arial, "Helvetica Neue", Helvetica, sans-serif;
           --mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
-          --fg: #000; --bg: #fff; --dim: #585a5a; --line: #c4c6c8; --hair: #b8b8bc; --panel: #f4f4f5;
-          --elev: #fff; --elev-dim: #585a5a; --scrim: rgb(0 0 0 / .45); }
-  :root[data-theme="dark"] { --fg: #fff; --bg: #000; --dim: #acacb0; --line: #5a5a60; --hair: #6a6a70; --panel: #0b0b0c;
-          --elev: #57575b; --elev-dim: #d0d0d4; --scrim: rgb(0 0 0 / .6); }
-  /* Panel palette: the only colours the canvas draws, and the only place
-     red, yellow and green are named (verify_b8's colour rule checks this).
-     Indian Railways panel convention, research/panel.md: clear track unlit
-     (PN-01), a set route white (PN-02, PN-08; black on light), occupied
-     track red over any route (PN-03). Light keeps the roles with darker
-     hues. Aspects are the same in both themes; each head has an ink
-     outline. Against the canvas, measured 2026-11-19: dark --trk 1.85:1,
-     --route 21:1, --occ 5.37:1; light --trk 1.68:1, --route 21:1, --occ
-     6.54:1. Unlit track is faint on purpose, as on a real panel. */
-  :root { --trk: #c7c7cc; --route: #000; --occ: #b3261e; --asp-r: #e5484d; --asp-y: #f5d90a; --asp-g: #30a46c; }
-  :root[data-theme="dark"] { --trk: #3a3a3c; --route: #fff; --occ: #e5484d; }
+          --fg: #fff; --bg: #000; --dim: #acacb0; --line: #5a5a60; --hair: #6a6a70; --panel: #0b0b0c;
+          --elev: #57575b; --elev-dim: #d0d0d4; --scrim: rgb(0 0 0 / .6); color-scheme: dark; }
+  /* Panel palette: the only colours the canvas, the clock and the board
+     draw, and the only place red, yellow and green are named (verify_b8's
+     colour rule checks this). The TTC Transit Control Centre wall, from
+     your photo (PLAN-look.md, research/panel.md PN-09): clear track lit
+     pale blue, a set route green, occupied track red over any route, train
+     describers white boxes. The wall's colour key is not published; green
+     and red are read from how they lie on the track. An LED clock in green
+     and a dot-matrix board in amber and red. Contrast against black is
+     quoted in PLAN-look.md. */
+  :root { --trk: #a8c4f2; --route: #5fd93c; --occ: #e5484d; --desc: #ffffff;
+          --asp-r: #e5484d; --asp-y: #f5d90a; --asp-g: #30a46c;
+          --led-g: #39ff6a; --led-a: #ffb000; --led-r: #ff3b30; }
   /* --elev: the command menu's surface, twr's measured values. On a black
      page a black scrim changes nothing, so dark lifts the surface instead
      (ui rules, figure-ground): #57575b is 2.9:1 against black, white text
@@ -85,9 +74,14 @@
   /* Tabular numbers (UI card No. 14), with reserved width so the bar never
      changes height as the clock ticks. */
   .val { display: inline-block; font-variant-numeric: tabular-nums lining-nums; text-align: right; }
-  #clock { min-width: 8ch; }
-  #handled, #putbacks { min-width: 3ch; }
-  #delay { min-width: 5ch; }
+  /* The readout as text, for screen readers and the verify scripts; the
+     clock and board below draw the same values. */
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .led { display: flex; align-items: center; padding: 4px 10px; background: var(--bg); border: 1px solid var(--hair); }
+  .led svg { display: block; height: 36px; }
+  .led .seg { fill: var(--led-g); opacity: .08; }
+  .led .seg.on { opacity: 1; }
+  #board { display: block; padding: 4px 8px; background: var(--bg); border: 1px solid var(--hair); }
   .best { color: var(--dim); }
   /* Nothing OS feedback: an inline [SAVED], no toast. */
   .saved { font: 11px var(--mono); letter-spacing: .08em; color: var(--dim); visibility: hidden; }
@@ -172,21 +166,24 @@
 </head>
 <body>
   <header class="bar">
-    <span class="brand">Cabin</span>
-    <span><span class="label">Station</span> NDLS</span>
-    <span><span class="label">Clock</span> <span class="val" id="clock">00:00:00</span></span>
-    <span><span class="label">Speed</span> <span class="val" id="speed">x4</span></span>
-    <span><span class="label">Seed</span> <span class="val" id="seed">-</span></span>
-    <span><span class="label">Mode</span> <span id="mode">-</span> <span class="best" id="window"></span></span>
-    <span id="scores"><span class="label">Handled</span> <span class="val" id="handled">0</span> <span class="best" id="b-handled"></span>
-      &nbsp; <span class="label">Delay min/train</span> <span class="val" id="delay">0.0</span> <span class="best" id="b-delay"></span>
-      &nbsp; <span class="label">Put back</span> <span class="val" id="putbacks">0</span> <span class="best" id="b-putbacks"></span></span>
+    <span class="brand">Cabin · NDLS</span>
+    <span class="led" aria-hidden="true"><svg id="ledclock" viewBox="0 0 164 36"></svg></span>
+    <canvas id="board" aria-hidden="true"></canvas>
+    <span class="sr" id="readout">
+      <span><span class="label">Station</span> NDLS</span>
+      <span><span class="label">Clock</span> <span class="val" id="clock">00:00:00</span></span>
+      <span><span class="label">Speed</span> <span class="val" id="speed">x4</span></span>
+      <span><span class="label">Seed</span> <span class="val" id="seed">-</span></span>
+      <span><span class="label">Mode</span> <span id="mode">-</span> <span class="best" id="window"></span></span>
+      <span id="scores"><span class="label">Handled</span> <span class="val" id="handled">0</span> <span class="best" id="b-handled"></span>
+        &nbsp; <span class="label">Delay min/train</span> <span class="val" id="delay">0.0</span> <span class="best" id="b-delay"></span>
+        &nbsp; <span class="label">Put back</span> <span class="val" id="putbacks">0</span> <span class="best" id="b-putbacks"></span></span>
+    </span>
     <span class="grow"></span>
     <span class="saved" id="saved">[Saved]</span>
     <button id="pause" type="button">Pause</button>
     <button id="cmdopen" type="button">Commands <span class="hint">Ctrl K</span></button>
     <button id="realopen" type="button">What is real</button>
-    <button id="theme" type="button">Light</button>
   </header>
   <div class="banner" id="banner" role="alert"></div>
   <main>
@@ -239,8 +236,9 @@ window.CABIN = (() => {
   const STORE_KEY = "cabin.v1";
   const CORRUPT_KEY = STORE_KEY + ".corrupt";
   const SCHEMA_VERSION = 2;
-  const systemTheme = () => matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-  const DEFAULTS = () => ({ v: SCHEMA_VERSION, settings: { theme: systemTheme() }, bests: {} });
+  // `settings` is kept as saved and not read: it held the theme until the
+  // look went dark only on 2026-11-19.
+  const DEFAULTS = () => ({ v: SCHEMA_VERSION, settings: {}, bests: {} });
   // Each entry upgrades from version n to n + 1.
   //   1 to 2: delay became minutes per train due. A v1 best is a shift's
   //   total, which cannot be divided without its train count, so it is kept
@@ -288,9 +286,12 @@ window.CABIN = (() => {
       let s = JSON.parse(raw);
       if (!plain(s) || !Number.isInteger(s.v)) throw new Error("no version");
       if (s.v > SCHEMA_VERSION) throw new Error(`saved by a newer cabin (v${s.v})`);
+      const migrated = s.v < SCHEMA_VERSION;
       while (s.v < SCHEMA_VERSION) s = MIGRATIONS[s.v](s);
-      const theme = plain(s.settings) && (s.settings.theme === "light" || s.settings.theme === "dark") ? s.settings.theme : systemTheme();
-      state = { ...DEFAULTS(), ...s, settings: { ...s.settings, theme }, bests: plain(s.bests) ? s.bests : {} };
+      state = { ...DEFAULTS(), ...s, settings: plain(s.settings) ? s.settings : {}, bests: plain(s.bests) ? s.bests : {} };
+      // Write the migrated copy back at once, so the old shape never has to
+      // be read again.
+      if (migrated) save();
     } catch (e) {
       // Guard 3: keep the unreadable copy under its own key, then play and
       // save on defaults. A different copy already kept there is never
@@ -301,6 +302,8 @@ window.CABIN = (() => {
         if (old === null || old === raw) { localStorage.setItem(CORRUPT_KEY, raw); kept = true; }
       } catch (_) { /* refused: kept stays false */ }
       writable = kept;
+      // The copy is safe under CORRUPT_KEY: put a readable store back now.
+      if (kept) save();
       report("store", "Saved bests could not be read.", kept
         ? `${e.message}. The saved copy is kept under ${CORRUPT_KEY}; defaults are in use, and new bests are saved.`
         : `${e.message}. ${CORRUPT_KEY} already holds a different copy, or storage refused one, so nothing is overwritten and bests are not saved in this browser.`);
@@ -321,28 +324,100 @@ window.CABIN = (() => {
     savedTimer = setTimeout(() => savedEl.classList.remove("on"), 1200);
   }
 
-  // ---- Theme -------------------------------------------------------------
-  const themeBtn = el("theme");
+  // ---- Palette, LED clock, dot-matrix board -----------------------------
   // Canvas colours come from the same custom properties as the DOM, read
-  // once per theme change rather than once per frame. Order is the App's
-  // `Palette`.
-  const PALETTE = ["bg", "fg", "dim", "trk", "route", "occ", "asp-r", "asp-y", "asp-g"];
+  // once at boot: the look is dark only. Order is the App's `Palette`.
+  const PALETTE = ["bg", "fg", "dim", "trk", "route", "occ", "desc", "asp-r", "asp-y", "asp-g"];
   let colours = [];
-  function applyTheme() {
-    document.documentElement.dataset.theme = state.settings.theme;
-    themeBtn.textContent = state.settings.theme === "dark" ? "Light" : "Dark";
+  function readPalette() {
     const cs = getComputedStyle(document.documentElement);
     colours = PALETTE.map(k => cs.getPropertyValue("--" + k).trim());
   }
-  // A mouse press leaves no focus on the button, so a later key is not a
-  // second press.
-  themeBtn.addEventListener("pointerdown", e => e.preventDefault());
-  function toggleTheme() {
-    state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
-    applyTheme();
-    save();
+
+  // Seven segments per digit, unlit ones faint so the digit shape shows, as
+  // on a real LED clock. HH:MM large, SS small, as in the TTC wall's clock.
+  const SEGS = { 0: "abcdef", 1: "bc", 2: "abdeg", 3: "abcdg", 4: "bcfg", 5: "acdfg", 6: "acdefg", 7: "abc", 8: "abcdefg", 9: "abcdfg" };
+  const ledDigits = [];
+  function buildClock() {
+    const svg = el("ledclock"), NS = "http://www.w3.org/2000/svg";
+    const rect = (g, x, y, w, h, cls) => { const r = document.createElementNS(NS, "rect");
+      r.setAttribute("x", x); r.setAttribute("y", y); r.setAttribute("width", w); r.setAttribute("height", h); r.setAttribute("class", cls); g.append(r); return r; };
+    // One digit at x0, scale k: 20 x 36 units, 4-unit strokes.
+    const digit = (x0, k) => {
+      const g = document.createElementNS(NS, "g");
+      g.setAttribute("transform", `translate(${x0} ${36 - 36 * k}) scale(${k}) skewX(-6)`);
+      const t = 4, w = 20, h = 36, v = h / 2 - 1.5 * t;
+      const at = { a: [t, 0, w - 2 * t, t], b: [w - t, t, t, v], c: [w - t, h / 2 + t / 2, t, v], d: [t, h - t, w - 2 * t, t],
+                   e: [0, h / 2 + t / 2, t, v], f: [0, t, t, v], g: [t, h / 2 - t / 2, w - 2 * t, t] };
+      const segs = {};
+      for (const [n, r] of Object.entries(at)) segs[n] = rect(g, ...r, "seg");
+      svg.append(g);
+      ledDigits.push(segs);
+    };
+    const colon = x => { const g = document.createElementNS(NS, "g"); rect(g, x, 10, 4, 4, "seg on"); rect(g, x, 22, 4, 4, "seg on"); svg.append(g); };
+    digit(0, 1); digit(24, 1); colon(50); digit(60, 1); digit(84, 1); digit(114, .6); digit(130, .6);
   }
-  themeBtn.addEventListener("click", toggleTheme);
+  function renderClock(s) {
+    const text = `${pad(Math.floor(s / 3600) % 24)}${pad(Math.floor(s / 60) % 60)}${pad(s % 60)}`;
+    ledDigits.forEach((segs, i) => { for (const [n, r] of Object.entries(segs)) r.classList.toggle("on", SEGS[text[i]].includes(n)); });
+  }
+
+  // A 5 x 7 dot font, one row of 5 bits per hex pair. Unlit dots are drawn
+  // faint, as on a real board. Characters outside the table print blank.
+  const GLYPH = {
+    A: "0E11111F111111", B: "1E11111E11111E", C: "0E11101010110E", D: "1C12111111121C", E: "1F10101E10101F",
+    F: "1F10101E101010", G: "0E11101711110F", H: "1111111F111111", I: "0E04040404040E", J: "0702020202120C",
+    K: "11121418141211", L: "1010101010101F", M: "111B1515111111", N: "11111915131111", O: "0E11111111110E",
+    P: "1E11111E101010", Q: "0E11111115120D", R: "1E11111E141211", S: "0F10100E01011E", T: "1F040404040404",
+    U: "1111111111110E", V: "11111111110A04", W: "1111111515150A", X: "11110A040A1111", Y: "1111110A040404",
+    Z: "1F01020408101F", 0: "0E11131519110E", 1: "040C040404040E", 2: "0E11010204081F", 3: "1F02040201110E",
+    4: "02060A121F0202", 5: "1F101E0101110E", 6: "0608101E11110E", 7: "1F010204080808", 8: "0E11110E11110E",
+    9: "0E11110F01020C", ":": "000C0C000C0C00", ".": "0000000000000C", "/": "00010204081000", "-": "0000001F000000",
+    "(": "02040808080402", ")": "08040202020408", "+": "0004041F040400", " ": "00000000000000",
+  };
+  const DOT = 2.5, BOARD_CHARS = 34;
+  const board = el("board");
+  let shownBoard = "";
+  function renderBoard(lines) {
+    const key = lines.join("\n");
+    if (key === shownBoard) return;
+    shownBoard = key;
+    const dpr = window.devicePixelRatio || 1, cw = BOARD_CHARS * 6 * DOT, ch = 2 * 8 * DOT;
+    board.style.width = cw + "px"; board.style.height = ch + "px";
+    board.width = Math.round(cw * dpr); board.height = Math.round(ch * dpr);
+    const g = board.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cs = getComputedStyle(document.documentElement);
+    lines.forEach(([text, role], row) => {
+      g.fillStyle = cs.getPropertyValue("--" + role).trim();
+      const t = text.toUpperCase().padEnd(BOARD_CHARS).slice(0, BOARD_CHARS);
+      for (let i = 0; i < BOARD_CHARS; i++) {
+        const hex = GLYPH[t[i]] || GLYPH[" "];
+        for (let y = 0; y < 7; y++) {
+          const bits = parseInt(hex.substr(2 * y, 2), 16);
+          for (let x = 0; x < 5; x++) {
+            g.globalAlpha = bits & (16 >> x) ? 1 : .1;
+            g.beginPath();
+            g.arc((i * 6 + x + .5) * DOT, (row * 8 + y + .5) * DOT, DOT * .42, 0, 2 * Math.PI);
+            g.fill();
+          }
+        }
+      }
+    });
+    g.globalAlpha = 1;
+  }
+  // The board's two lines, from the readout's text: the shift on the first
+  // in amber, the three numbers with their bests on the second in red.
+  function refreshBoard() {
+    const t = id => el(id).textContent.trim();
+    const best = id => t(id).replace(/^best /, "");
+    const with_ = (v, id) => best(id) ? `${v}(${best(id)})` : v;
+    const scored = !el("scores").hidden;
+    renderBoard([
+      [`${t("mode")} ${t("window")} SEED ${t("seed")} ${t("speed")}`, "led-a"],
+      [scored ? `HANDLED ${with_(t("handled"), "b-handled")} DELAY ${with_(t("delay"), "b-delay")} PB ${with_(t("putbacks"), "b-putbacks")}` : "NOT SCORED", "led-r"],
+    ]);
+  }
 
   // ---- Canvas ------------------------------------------------------------
   const canvas = el("map");
@@ -513,7 +588,6 @@ window.CABIN = (() => {
     { title: app.paused() ? "Resume" : "Pause", keys: "Space", run: togglePause },
     { title: "Clear the chosen signal", keys: "Esc", run: () => app.escape() },
     { title: "Cancel the chosen signal's route", keys: "Del", run: () => app.cancel_selected() },
-    { title: state.settings.theme === "dark" ? "Light theme" : "Dark theme", keys: "T", run: toggleTheme },
     { title: "What is real: sources, tags and constants", run: openReal },
     { title: `Replay this shift (${app.mode()}, seed ${app.seed()})`, run: () => newShift(app.mode(), app.seed()) },
     ...MODES.map(m => ({ title: `New shift: ${m}${m === "practice" ? ", not scored" : ""}`, run: () => newShift(m, null) })),
@@ -657,7 +731,6 @@ window.CABIN = (() => {
     if (typing(e)) return;
     if (e.key === " ") { e.preventDefault(); togglePause(); }
     else if (e.key === "Delete" || e.key === "Backspace") { if (app.cancel_selected()) e.preventDefault(); }
-    else if (e.key.toLowerCase() === "t") toggleTheme();
   });
 
   // ---- Seed --------------------------------------------------------------
@@ -737,11 +810,13 @@ window.CABIN = (() => {
     el("handled").textContent = String(handled);
     el("delay").textContent = fmtDelay(delay);
     el("putbacks").textContent = String(putBacks);
+    refreshBoard();
     if (!over || ended) return;
     ended = true;
     const mode = app.mode();
     const better = recordBest(mode, { handled, delay_per_train: Math.round(delay * 10) / 10, put_backs: putBacks });
     renderBests(mode);
+    refreshBoard();
     if (!app.paused()) togglePause();
     const names = { handled: "trains handled", delay_per_train: "delay per train", put_backs: "put-backs" };
     app_say(`Shift over at ${hhmm(app.shift_window()[1])}: ${handled} train${handled === 1 ? "" : "s"} handled, ${fmtDelay(delay)} min delay per train, ${putBacks} put back.`
@@ -759,7 +834,8 @@ window.CABIN = (() => {
   const pad = n => String(n).padStart(2, "0");
   function boot(wasmBase64) {
     load();
-    applyTheme();
+    readPalette();
+    buildClock();
     fit();
     const [seed, seedNote] = pickSeed();
     const [mode, modeNote] = pickMode();
@@ -780,6 +856,7 @@ window.CABIN = (() => {
     el("window").textContent = mode === "practice" ? "not scored" : `${hhmm(w0)}-${hhmm(w1)}`;
     el("scores").hidden = mode === "practice";
     renderBests(mode);
+    refreshBoard();
     wireInput();
     if (seedNote || modeNote) msgEl.textContent = [seedNote, modeNote].filter(Boolean).join(" ");
     shownSeq = app.status_seq();
@@ -792,7 +869,7 @@ window.CABIN = (() => {
       if ((window.devicePixelRatio || 1) !== dpr) fit();
       if (!draw(dt)) return;
       const s = Math.floor(app.clock_s());
-      if (s !== shown) { shown = s; el("clock").textContent = `${hhmm(s)}:${pad(s % 60)}`; }
+      if (s !== shown) { shown = s; el("clock").textContent = `${hhmm(s)}:${pad(s % 60)}`; renderClock(s); }
       renderStatus();
       renderScore();
       renderRack();

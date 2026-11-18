@@ -71,22 +71,24 @@ struct Palette {
     bg: String,
     fg: String,
     dim: String,
-    /// Track, unlit when clear (PN-01).
+    /// Track, lit when clear, as on the TTC wall (PLAN-look.md).
     trk: String,
-    /// A set and locked route (PN-02, PN-08).
+    /// A set and locked route; also a dwell still running.
     route: String,
-    /// Occupied track, over any route (PN-03).
+    /// Occupied track, over any route (PN-03); also a dwell overrun.
     occ: String,
+    /// A train describer's box; its number is drawn in `bg`.
+    desc: String,
     /// Signal aspects: red, yellow, green.
     asp: [String; 3],
 }
 
 impl Palette {
     fn new(p: Vec<String>) -> Result<Palette, JsValue> {
-        let Ok([bg, fg, dim, trk, route, occ, r, y, g]) = <[String; 9]>::try_from(p) else {
-            return Err(JsValue::from_str("palette: expected 9 colours: bg fg dim trk route occ asp-r asp-y asp-g"));
+        let Ok([bg, fg, dim, trk, route, occ, desc, r, y, g]) = <[String; 10]>::try_from(p) else {
+            return Err(JsValue::from_str("palette: expected 10 colours: bg fg dim trk route occ desc asp-r asp-y asp-g"));
         };
-        Ok(Palette { bg, fg, dim, trk, route, occ, asp: [r, y, g] })
+        Ok(Palette { bg, fg, dim, trk, route, occ, desc, asp: [r, y, g] })
     }
 }
 
@@ -383,7 +385,7 @@ impl App {
             ("Traffic", "secondary", format!("About {p} trains on a busy day, from a 2016 survey of the station's berthing chart (AG18) and the datameet 2016 timetable, read {written}. No figure is from Indian Railways. The {pool} train numbers and names are real; their times are drawn from the seed.")),
             ("Score and shift", "assumed", "Three plain numbers, never blended. The shift length, its start and the mode fractions were chosen by you on 2026-11-18; see the constants below.".to_string()),
             ("Panel", "schematic", "Track order and connections are the yard's; lengths and angles are drawn, not measured.".to_string()),
-            ("Indications", "primary", "Clear track unlit, a set and locked route white, occupied track red over any route: the Indian Railways track-circuit chapter (2023) section 17.2.6 and Signal Engineering Manual section 7.172.2 (research/panel.md PN-01 to PN-03, PN-08). On the light theme the route is black.".to_string()),
+            ("Indications", "authored", "Clear track lit pale blue, a set route green, occupied track red over any route: the look of the TTC Transit Control Centre wall in Toronto, from a photo whose colour key is not published (research/panel.md PN-09). Red for occupied is also Indian Railways' (PN-03); an Indian Railways panel shows clear track unlit and a set route in white (PN-01, PN-02, PN-08).".to_string()),
             ("Point lie", "assumed", "A point's leg that is not lying is drawn broken at the switch. A real panel shows the lie, but how it looks was not found (PN-04, PN-05).".to_string()),
         ]
         .into_iter()
@@ -811,6 +813,17 @@ impl App {
         out
     }
 
+    /// Test hook, read-only: each platform timer as drawn: `P6\tx\ty\t13:32\tlate`,
+    /// `x, y` the label point in CSS px; the timer is drawn 10 px below it.
+    pub fn dwell_screen(&self) -> Vec<String> {
+        let y = &self.world.yard;
+        self.dwells().into_iter().enumerate().filter_map(|(k, d)| {
+            let (txt, late) = d?;
+            let (x, yy) = self.platform_label_xy(k)?;
+            Some(format!("P{}\t{x}\t{yy}\t{txt}\t{late}", y.platforms[k].name))
+        }).collect()
+    }
+
     /// Test hook: run `game_s` of game time at once, as the frame loop
     /// would over many frames. It steps the same sim; it changes no rule.
     pub fn skip(&mut self, game_s: f64) {
@@ -1058,6 +1071,31 @@ impl App {
         }
     }
 
+    /// Per platform, its berthed train's dwell as the wall prints a timer
+    /// under each station: time left, or `+` time overrun and `true`.
+    fn dwells(&self) -> Vec<Option<(String, bool)>> {
+        let (w, y) = (&self.world, &self.world.yard);
+        let hz = u64::from(TICK_HZ);
+        let mut dwell = vec![None; y.platforms.len()];
+        for t in w.trains.values().filter(|t| t.leaving.is_none()) {
+            if let (Some(s), Some(u)) = (t.next_signal, t.dwell_until)
+                && let Some(k) = y.signals[s].platform
+            {
+                dwell[k] = Some(if w.tick < u { (mmss((u - w.tick).div_ceil(hz)), false) } else { (format!("+{}", mmss((w.tick - u) / hz)), true) });
+            }
+        }
+        dwell
+    }
+
+    /// Platform `k`'s label point on screen: mid flat run, not mid vertex,
+    /// because a jogging platform's middle vertex is its jog corner, where
+    /// the Starter's head and name already sit.
+    fn platform_label_xy(&self, k: usize) -> Option<(f64, f64)> {
+        let s = &self.shapes[self.world.yard.platforms[k].edge];
+        let run = s.windows(2).filter(|w| w[0].1 == w[1].1).max_by(|a, b| (a[1].0 - a[0].0).abs().total_cmp(&(b[1].0 - b[0].0).abs()))?;
+        Some(self.to_screen((run[0].0 + run[1].0) / 2.0, run[0].1))
+    }
+
     /// Where each edge's stroke is cut short, CSS px at its `a` and `b`
     /// ends: the leg of each point that is not lying, at the switch.
     fn lie_cuts(&self) -> Vec<(f64, f64)> {
@@ -1074,9 +1112,9 @@ impl App {
         cut
     }
 
-    /// The Indian Railways panel convention (research/panel.md): clear track
-    /// unlit, a set route in the route colour (path solid, overlap dashed),
-    /// occupied track sections red over any route, each train's number in a
+    /// The control-room wall of PLAN-look.md: clear track lit, a set route
+    /// in the route colour (path solid, overlap dashed), occupied track
+    /// sections red over any route (PN-03), each train's number in a filled
     /// describer box. Draw order is that override order.
     fn draw(&self, p: &Palette) {
         let ctx = &self.ctx;
@@ -1144,11 +1182,10 @@ impl App {
             self.stroke(&self.shapes[e]);
         }
 
-        // Describers: each train's number boxed above its head.
+        // Describers: each train's number in a filled box above its head.
         ctx.set_font("700 11px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
         ctx.set_text_align("center");
         ctx.set_text_baseline("middle");
-        ctx.set_line_width(1.0);
         for (&id, b) in &occ.bodies {
             let e = &y.edges[b.head.0];
             let ((u, v), _) = at_metres(&self.shapes[b.head.0], e.len, b.head.1);
@@ -1157,11 +1194,9 @@ impl App {
             // Monospace: 0.6 em a character, so no text measuring is needed.
             let half = name.chars().count() as f64 * 6.6 / 2.0 + 4.0;
             let top = yy - 24.0;
-            ctx.set_fill_style_str(&p.bg);
+            ctx.set_fill_style_str(&p.desc);
             ctx.fill_rect(x - half, top, 2.0 * half, 15.0);
-            ctx.set_stroke_style_str(&p.route);
-            ctx.stroke_rect(x - half, top, 2.0 * half, 15.0);
-            ctx.set_fill_style_str(&p.route);
+            ctx.set_fill_style_str(&p.bg);
             let _ = ctx.fill_text(&name, x, top + 8.0);
         }
 
@@ -1187,17 +1222,20 @@ impl App {
         }
         self.draw_heads(p);
 
-        ctx.set_font("11px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
-        ctx.set_fill_style_str(&p.dim);
-        // Mid flat run, not mid vertex: a jogging platform's middle vertex is
-        // its jog corner, where the Starter's head and name already sit.
-        for p in &y.platforms {
-            let s = &self.shapes[p.edge];
-            let Some(run) = s.windows(2).filter(|w| w[0].1 == w[1].1)
-                .max_by(|a, b| (a[1].0 - a[0].0).abs().total_cmp(&(b[1].0 - b[0].0).abs())) else { continue };
-            let (x, yy) = self.to_screen((run[0].0 + run[1].0) / 2.0, run[0].1);
-            let _ = ctx.fill_text(&format!("P{}", p.name), x, yy - 9.0);
+        // Names in white bold sans, as the wall's station names; under each,
+        // its berthed train's dwell.
+        let dwell = self.dwells();
+        ctx.set_font("700 12px \"Liberation Sans\", Arial, sans-serif");
+        for (k, pl) in y.platforms.iter().enumerate() {
+            let Some((x, yy)) = self.platform_label_xy(k) else { continue };
+            ctx.set_fill_style_str(&p.fg);
+            let _ = ctx.fill_text(&format!("P{}", pl.name), x, yy - 9.0);
+            if let Some((txt, late)) = &dwell[k] {
+                ctx.set_fill_style_str(if *late { &p.occ } else { &p.route });
+                let _ = ctx.fill_text(txt, x, yy + 10.0);
+            }
         }
+        ctx.set_fill_style_str(&p.fg);
         for (k, p) in y.portals.iter().enumerate() {
             let (x, yy) = self.portal_xy(k);
             // North portals sit at the left end, south at the right; the
@@ -1208,6 +1246,7 @@ impl App {
         }
         // Signal names, beyond the head on the side away from the track.
         ctx.set_font("10px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
+        ctx.set_fill_style_str(&p.dim);
         for (k, s) in y.signals.iter().enumerate() {
             let ((_, _), (du, dv)) = self.sig_path[k][self.sig_pick[k]];
             let (x, yy) = self.head_screen(k);

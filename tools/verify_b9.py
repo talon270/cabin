@@ -1,15 +1,16 @@
 """S2 and S3 verification: routes set by real gestures draw as unbroken
 lines on the schematic, and each indication reads its colour from canvas
-pixels, in both themes, at 1920 and 1500 px.
+pixels, at 1920 and 1500 px. Dark only since PLAN-look.md (2026-11-19);
+the browser asks for a light scheme half the time, which the page ignores.
 
-For each theme and width it opens practice on seed 1, then for each Starter
+For each width and system scheme it opens practice on seed 1, then for each Starter
 head on the default view: a mouse click on the head chooses it, and a click
 on its first exit button that sets a route sets it (portal exits are not on
 the canvas, so their buttons are the control, as in verify_b6.py). After
 three routes, it reads each route's drawn edges from the read-only hook
 `CABIN.app.route_screen(id)` and samples the canvas every 1 px along them:
 a sample passes if a pixel within 1 px has the route colour (`--route`,
-white on dark, black on light). Any run of more than 2 px of failed samples
+green, the TTC wall's route colour). Any run of more than 2 px of failed samples
 is a gap. Samples off the canvas are skipped. A route not set must fail the
 same sampler. It saves a screenshot of each view.
 
@@ -19,10 +20,13 @@ switch on screen, the pixel on the leg not lying is nearer `--bg` than
 siding legs are 1 px wide, so one pixel may be half lit). Points within 30 px of a signal head are skipped:
 the head or its name covers them. Points whose two legs are drawn on one
 line (the samples under 2 px apart) are skipped and listed: a known S1
-layout defect, 13 of 75 drawn points, in which no lie can show. Occupied track, at 1920 px in each theme: Accept the
+layout defect, 13 of 75 drawn points, in which no lie can show. Occupied track, at 1920 px: Accept the
 first offer and route it in by clicks, as verify_b6.py does, run the train
 onto the view, and read `--occ` at the middle of each occupied edge from
-`occupied_screen()`.
+`occupied_screen()`. Then the dwell (PLAN-look.md L4): once the train
+berths, `dwell_screen()` names its platform and timer, the timer agrees
+with the rack, `--route` pixels are lit where it is drawn, and it counts
+down.
 
 Usage: python3 tools/verify_b9.py <scratch folder>
 Exits 0 only if every check passed.
@@ -187,6 +191,21 @@ def run_train_in(pg, tag: str) -> None:
         frames(pg)
 
 
+def dwell(pg) -> dict | None:
+    """The first platform timer, and how many `--route` pixels light the
+    box it is drawn in (10 px under the label point)."""
+    rows = app(pg, "a.dwell_screen()")
+    if not rows:
+        return None
+    name, x, y, txt, late = rows[0].split("\t")
+    lit = pg.evaluate("""([x, y]) => {""" + PIX + """
+      const c = rgb('--route'); let n = 0;
+      for (let dy = 3; dy <= 17; dy++) for (let dx = -24; dx <= 24; dx++) if (near(x + dx, y + dy, c, 0)) n++;
+      return n;
+    }""", [float(x), float(y)])
+    return {"platform": name, "timer": txt, "late": late == "true", "lit": lit}
+
+
 def gaps(pg, rid: int) -> dict:
     """Sample the canvas along route `rid`'s drawn edges."""
     return pg.evaluate("""({rid, gapPx}) => {
@@ -236,7 +255,7 @@ with sync_playwright() as pw:
             pg.goto(PAGE + "?mode=practice&seed=1")
             pg.wait_for_timeout(600)
             tag = f"{theme} {width}x{height}"
-            check(pg.evaluate("document.documentElement.dataset.theme") == theme and not errors, f"{tag}: page starts with no errors")
+            check(not errors, f"{tag}: page starts with no errors")
             routes = set_three_routes(pg)
             check(len(routes) == 3, f"{tag}: three routes set by clicks ({[(e, x) for e, x, _ in routes]})")
             frames(pg)
@@ -249,7 +268,7 @@ with sync_playwright() as pw:
             control = next((g for g in (gaps(pg, r) for r in range(60) if r not in set_ids) if g["samples"] > 100), None)
             check(control is not None and not control["ok"], f"{tag}: an unset route reads as gapped ({control})")
             route_rgb = pg.evaluate("() => {" + PIX + " return rgb('--route'); }")
-            check(route_rgb == ([255] * 3 if theme == "dark" else [0] * 3), f"{tag}: the route colour is {'white' if theme == 'dark' else 'black'} ({route_rgb})")
+            check(route_rgb[1] > 180 and route_rgb[1] > route_rgb[0] + 60 and route_rgb[1] > route_rgb[2] + 60, f"{tag}: the route colour is green ({route_rgb})")
             lz = lie(pg)
             check(lz["n"] >= 10 and lz["gap"] == lz["n"] and lz["solid"] == lz["n"], f"{tag}: point lie: the leg not lying is broken at the switch, the leg lying is not ({lz})")
             check(not errors, f"{tag}: no page errors ({errors[:2]})")
@@ -257,7 +276,7 @@ with sync_playwright() as pw:
             ctx.close()
         if width != 1920:
             continue
-        for theme in ["dark", "light"]:
+        for theme in ["dark"]:
             ctx = browser.new_context(viewport={"width": width, "height": height}, color_scheme=theme)
             pg = ctx.new_page()
             errors = []
@@ -268,6 +287,23 @@ with sync_playwright() as pw:
             run_train_in(pg, tag)
             o = occupied(pg)
             check(o["n"] >= 2 and o["red"] == o["n"], f"{tag}: each occupied edge on the view reads --occ at its middle ({o})")
+            d0 = None
+            for _ in range(120):
+                d0 = dwell(pg)
+                if d0:
+                    break
+                app(pg, "a.skip(5)")
+                frames(pg)
+            frames(pg)
+            d0 = dwell(pg)
+            rack_txt = " | ".join(r.split("\t")[3] for r in app(pg, "a.rack()"))
+            check(d0 is not None and not d0["late"] and f"{d0['platform']} dwell, {d0['timer']} left" in rack_txt and d0["lit"] > 20,
+                  f"{tag}: the berthed train's dwell shows under its platform, lit in --route, as the rack says ({d0}; rack: {rack_txt})")
+            app(pg, "a.skip(2)")
+            frames(pg)
+            d1 = dwell(pg)
+            mins = lambda t: int(t.split(":")[0]) * 60 + int(t.split(":")[1])
+            check(d0 is not None and d1 is not None and mins(d1["timer"]) == mins(d0["timer"]) - 2, f"{tag}: the timer counts down: {d0 and d0['timer']} -> {d1 and d1['timer']}")
             check(not errors, f"{tag}: no page errors ({errors[:2]})")
             pg.screenshot(path=str(OUT / f"b9-{theme}-occupied.png"))
             ctx.close()

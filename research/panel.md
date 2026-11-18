@@ -17,8 +17,10 @@ below was checked against the official Indian Railways PDFs.
 | PN-06 | Signal ON indication colour and exact rendering | assumed | assumed |
 | PN-07 | Control panel should indicate point position and signal aspect: “The position of points and aspects of Signals, condition of routes, as required.” | Indian Railways, *Signal Engineering Manual, Part I*, §7.172.2(i), [PDF](https://rb.indianrailways.gov.in/uploads/codesmanual/SEM-I/Sem_1_chap-VII.pdf) | primary |
 | PN-08 | Set and locked route indication is white: “White indication to indicate that the route has been set and locked.” | Indian Railways, *Signal Engineering Manual, Part I*, §7.172.2(iv), [PDF](https://rb.indianrailways.gov.in/uploads/codesmanual/SEM-I/Sem_1_chap-VII.pdf) | primary |
+| PN-09 | The TTC Transit Control Centre wall (Toronto): clear track lit pale blue, long runs green, short sections red, some runs magenta, trains as small white boxes, station names white with a small green or red time under each; a green seven-segment clock and a red and amber dot-matrix board above. Sampled from the photo: track `#a8c0f0`, green `#90c078`, red `#783030` (camera-washed). No published colour key was found; green as route set and red as occupied are read from where they lie | Your photo, shared 2026-11-19; three web searches found no key | photo, unsourced key |
 
 The 2023 chapter says yellow/white for a set route, while SEM §7.172 specifies
-white for a set-and-locked route. S3 uses white, matching the specific
-set-and-locked indication. The sources do not assign colours to the point
+white for a set-and-locked route. S3 used white, matching the specific
+set-and-locked indication; since 2026-11-19 the game draws PN-09's look
+instead, at your choice, and keeps PN-03's red. The sources do not assign colours to the point
 lies or to a signal at ON.

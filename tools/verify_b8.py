@@ -1,5 +1,6 @@
 """B8 verification: every edge made to fail, the "what is real" panel,
-Guard 3, reduced motion, both themes, the colour rule, frame time at Peak.
+Guard 3, reduced motion, the dark-only look (PLAN-look.md, 2026-11-19), the
+colour rule, frame time at Peak.
 
 Checks the B8 "done" line of PLAN-cabin.md: it prints what the page or the
 tool shows for each row of the plan's edges table, and the median frame
@@ -39,7 +40,7 @@ OUT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 OUT.mkdir(parents=True, exist_ok=True)
 VIEW = {"width": 1920, "height": 1080}
 SHIFT_S = 90 * 60
-ASPECTS = ["#e5484d", "#f5d90a", "#30a46c", "#b3261e"]  # aspects, and occupied on light
+ASPECTS = ["#e5484d", "#f5d90a", "#30a46c"]
 ENV = {**os.environ, "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", str(pathlib.Path.home() / ".cache/cabin-target"))}
 results: list[tuple[bool, str]] = []
 
@@ -158,11 +159,13 @@ def storage_blocked_or_full(b) -> None:
 
     ctx = seeded(b, "Storage.prototype.setItem = function () { throw new DOMException('full in the test', 'QuotaExceededError'); };")
     pg = tab(ctx)
-    pg.keyboard.press("t")
-    banner = text(pg, "#banner")
-    quote("storage full, banner after a theme change", banner)
-    check(banner.startswith("Bests are not saved in this browser.") and "full or blocked" in banner, "storage full: the banner says bests are not saved")
+    # Nothing saves before the shift ends since the theme went (2026-11-19):
+    # the first write is the best at the end.
     app(pg, f"a.skip({SHIFT_S + 1})")
+    frames(pg)
+    banner = text(pg, "#banner")
+    quote("storage full, banner after the end-of-shift save", banner)
+    check(banner.startswith("Bests are not saved in this browser.") and "full or blocked" in banner, "storage full: the banner says bests are not saved")
     check("Bests are not saved in this browser" in text(pg, "#msg"), "storage full: the result line says so")
     ctx.close()
 
@@ -198,6 +201,7 @@ def second_tab(b) -> None:
 
 
 def bad_seed_and_real(b) -> None:
+    # The page is dark only; a light system scheme must change nothing.
     for scheme in ["dark", "light"]:
         ctx = seeded(b, "", scheme)
         pg = tab(ctx, "?mode=normal&seed=abc")
@@ -312,12 +316,13 @@ def frame_time(b) -> None:
 
 def colour_rule() -> None:
     """Red, yellow and green are named in the panel palette block of
-    web/shell.html only: as `--occ` and `--asp-*` values. lib.rs names no
+    web/shell.html only: as `--route`, `--occ`, `--asp-*` and `--led-*`
+    values. lib.rs names no
     colour at all; the canvas reads every colour from the page."""
     shell = (ROOT / "web/shell.html").read_text()
     page = (ROOT / "dist/index.html").read_text()
     page_text = re.sub(r'CABIN\.boot\("[^"]*"\)', "", page)
-    palette = re.compile(r"--(?:trk|route|occ|asp-[ryg])\s*:\s*#[0-9a-f]{3,6}\s*;", re.I)
+    palette = re.compile(r"--(?:trk|route|occ|desc|asp-[ryg]|led-[gar])\s*:\s*#[0-9a-f]{3,6}\s*;", re.I)
     declared = palette.findall(shell)
     rest = palette.sub("", shell).lower() + palette.sub("", page_text).lower()
     hits = [h for h in ASPECTS if h in rest]
@@ -325,7 +330,7 @@ def colour_rule() -> None:
     named = re.findall(r"(?:color|background|fill|stroke|border[\w-]*)\s*:\s*[^;}]*\b(red|yellow|green|lime|orange)\b", shell + page_text, re.I)
     src = (ROOT / "crates/web/src/lib.rs").read_text().splitlines()
     outside = [i + 1 for i, l in enumerate(src) if re.search(r'"#[0-9a-f]{3,8}"|\brgba?\(', l, re.I)]
-    check(len(declared) == 9 and not hits and not named and not outside,
+    check(len(declared) == 10 and not hits and not named and not outside,
           f"colour rule: aspect and indication colours only in the palette block ({len(declared)} declarations): page {hits + named}, lib.rs colour literals on lines {outside}")
 
 

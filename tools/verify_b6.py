@@ -5,7 +5,7 @@ each `Refusal` shown as text, 0 signal pairs under 44 px at the default
 view, and a command menu that opens, closes on one Esc and returns focus.
 Also: zero console errors and no network request, the route preview
 between the clicks, Esc, Space, the rack, `?seed=` replay and a malformed
-seed, both themes.
+seed. The page is dark only since PLAN-look.md (2026-11-19).
 
 Every action is a real click or key press on the page, with two kinds of
 exception, each named where it happens: `CABIN.app.skip(s)` runs game time
@@ -377,15 +377,9 @@ def menu_and_keys(b) -> None:
     g3 = app(pg, "a.game_s()")
     check(g1 - g0 > 1.0, f"Space resumes: {g1 - g0:.1f} game s in 0.5 real s at x4")
     check(g3 == g2, f"Space pauses: {g3 - g2:.1f} game s in 0.5 real s")
-    # T switches theme; the menu surface in light.
-    pg.keyboard.press("t")
-    frames(pg)
-    theme = pg.evaluate("document.documentElement.dataset.theme")
-    check(theme == "light", f"T switches to light ({theme})")
     pg.keyboard.press("Control+k")
-    pg.screenshot(path=str(OUT / "b6-menu-light.png"))
+    pg.screenshot(path=str(OUT / "b6-menu.png"))
     pg.keyboard.press("Escape")
-    pg.screenshot(path=str(OUT / "b6-light.png"))
     check(not errs, f"menu run: no console error {errs[:3]}; dark menu surface {bg}")
     ctx.close()
 

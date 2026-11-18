@@ -48,7 +48,6 @@ script run on an old page proves nothing about the change.
 | `Esc` | clear the choice |
 | `Delete` | cancel the chosen signal's route |
 | `Space` | pause; after a shift ends, play on unscored |
-| `T` | switch theme |
 | `Ctrl K` / `Cmd K` | command menu: every action, a replay, a new shift. `hn3 p5` finds "Set HN3 to P5 (ST5S)" |
 | Drag, wheel | pan, zoom (zoom springs; jumps under reduced motion) |
 | What is real | the sources, tags and dates of each layer, and every constant with its tag |
@@ -141,13 +140,19 @@ and connections are the yard's; lengths and angles are drawn. The station
 area is at true length, the throats at 0.35, and the whole drawing is 1.88
 times the true 2,256 m, because the jogs need room.
 
-**The indications are Indian Railways', from the manual.** Clear track is
-unlit, a set route is white (path solid, overlap dashed), and occupied track
-is red over any route, as the track-circuit chapter (2023, §17.2.6) and the
-Signal Engineering Manual (§7.172.2) say (`research/panel.md`). A train is
-its lit sections and its number in a describer box, not a block. A point's
-leg that is not lying is broken for 6 px at the switch; that look is
-assumed, because no source says how a panel draws it.
+**The panel looks like the TTC control-centre wall, and says it is not
+Indian Railways'.** Clear track is lit pale blue, a set route green (path
+solid, overlap dashed), occupied track red over any route, each train a
+white describer box, each berthed train's dwell counting down under its
+platform. The header is a seven-segment LED clock and a dot-matrix board,
+drawn in SVG and canvas, so no font is fetched. The look is a photo of the
+Toronto Transit Control Centre wall (`PLAN-look.md`); its colour key is not
+published, so green and red are read from where they lie on the track.
+Only red for occupied is also Indian Railways' (`research/panel.md` PN-03):
+an Indian Railways panel shows clear track unlit and a set route white,
+which the S3 build drew until 2026-11-19. A point's leg that is not lying
+is broken for 6 px at the switch; that look is assumed. The page is dark
+only.
 
 ## What is assumed and what is solid
 
@@ -164,7 +169,7 @@ the code.
 | Hourly spread, peak 22 at 09:00 (one 2016 survey, secondary) | 275 trains on a busy day; one third from the north; the type mix | a timetable newer than 2016 |
 | 139 train numbers and names (secondary; 28 unconfirmed) | rake lengths, mostly; terminating dwell 600 to 1200 s | — |
 | — | 30 m fouling length, 180 s block headway, 120 s approach release, 0.3 and 0.5 m/s² | measured fouling marks; NR practice |
-| Panel colours: clear track unlit, set route white, occupied red over any route (`research/panel.md` PN-01 to PN-03, PN-08) | how a point's lie and a signal at danger look on the panel (PN-04 to PN-06); the light theme's darker hues | a photo or drawing of an NDLS panel |
+| Occupied track red over any route (`research/panel.md` PN-03) | every other panel colour: the TTC wall's look, from a photo with no published key (PN-09); a point's lie and a signal at danger (PN-04 to PN-06) | a photo or drawing of an NDLS panel |
 | Track order and connections on the panel (from the yard) | every drawn length and angle: rows 30 m apart, 45° jogs, throats at 0.35 of true length | — |
 | — | `TIME_SCALE` 4, chosen from the soak: 2.0 route decisions per real minute on average, 2.6 in the peak hour | your play |
 
@@ -182,9 +187,10 @@ the code.
   each other for 8 m to 1,088 m, so the lie gap cannot show and a route over
   either leg looks the same. The schematic layout puts them there; the
   sim's routes are right. `verify_b9.py` lists them and skips them.
-- **Unlit track is faint by design.** Dark track `#3a3a3c` is 1.85:1 against
-  black; light `#c7c7cc` is 1.68:1 against white. A real panel is dim when
-  clear; whether it is too dim to play is your call.
+- **A set route and clear track differ by hue, not brightness.** Green
+  `#5fd93c` against pale blue `#a8c4f2` is 1.03:1; the route is drawn 3 px
+  against the track's 2 px. The photo has the same property. Red occupied
+  is 2.21:1 against the track.
 - **The 144 yard edges are stubs.** They need 65 rows and form an ordering
   cycle; no train runs on them.
 - **Platforms 15 and 16 are not worked.** Their only arrivals came from the
@@ -202,10 +208,12 @@ to scale" and "not for real-world use". The derived files in `data/`
 carry the same licence. The traffic research lives in `research/`, one ledger
 row per fact, with its source.
 
-The page stores your theme and your bests, per field and per mode, in
+The page stores your bests, per field and per mode, in
 `localStorage` under `cabin.v1` (schema 2; a schema 1 delay best was a shift total, and the
 migration keeps it under `v1_delay_totals` rather than show it as a per-train best). An unreadable or future-version
-copy is kept under `cabin.v1.corrupt` and a banner says so. It sends nothing
+copy is kept under `cabin.v1.corrupt` and a banner says so. A theme saved
+before the look went dark only (2026-11-19) stays in the store, unread. A
+migrated store is written back on load. It sends nothing
 anywhere. The repo is public on GitHub, `talon270/cabin`.
 
 **Play it at https://talon270.github.io/cabin/.** The `gh-pages` branch holds

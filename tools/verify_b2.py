@@ -1,9 +1,11 @@
 """B2 verification: the skeleton page, driven with real mouse input.
 
 Checks the B2 "done" line of PLAN-cabin.md: zero console errors on a fresh
-and a seeded profile, both themes, 1920 px, no network request. Plus what
-the skeleton must do: draw the yard, pan 1:1, rubber-band past an edge and
-spring back, zoom about the cursor, run the sim clock, save the theme.
+and a seeded profile, 1920 px, no network request. Plus what the skeleton
+must do: draw the yard, pan 1:1, rubber-band past an edge and spring back,
+zoom about the cursor, run the sim clock. Since PLAN-look.md (2026-11-19)
+the page is dark only, on a light system too, and the theme checks became
+that check; a fresh profile writes nothing, a migrated one is written back.
 
 Read-only hooks on CABIN.app give screen positions; every action is a real
 click, drag or wheel. Usage: python3 tools/verify_b2.py <scratch folder>
@@ -85,7 +87,7 @@ with sync_playwright() as pw:
     ctx, pg, errs, reqs = open_page(b, "dark")
     ox, oy, cw, ch = canvas_box(pg)
     check(cw >= 0.6 * VIEW["width"], f"panel takes two thirds at 1920 px: {cw:.0f} px wide")
-    check(pg.evaluate("document.documentElement.dataset.theme") == "dark", "fresh profile follows the system: dark")
+    check(corner_rgb(pg) == [0, 0, 0] and not pg.locator("#theme").count(), "the panel is black and has no theme button")
     check(not pg.is_visible("#banner"), "no banner on a fresh profile")
     attr = pg.text_content("#attr")
     check("2026-11-15" in attr and "not to scale" in attr, f"attribution names the extract date and the stretch: {attr!r}")
@@ -152,23 +154,16 @@ with sync_playwright() as pw:
     check(u0 <= back[0] <= u1 and v0 <= back[1] <= v1, f"on release it springs back inside: centre u {back[0]:.1f} (edge {u0:.1f})")
     check(not errs, f"no console errors, fresh profile: {errs}")
 
-    # Theme: a real click flips it, saves it, and the canvas redraws in it.
-    dark_bg = corner_rgb(pg)
-    pg.click("#theme")
+    check(pg.evaluate("localStorage.getItem('cabin.v1')") is None, "a fresh profile writes nothing until there is something to save")
+    pg.keyboard.press("t")
     frames(pg)
-    check(pg.evaluate("document.documentElement.dataset.theme") == "light", "theme button switches to light")
-    check(pg.is_visible("#saved"), "[SAVED] shows inline after the switch")
-    stored = json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))
-    check(stored == {"v": 2, "settings": {"theme": "light"}, "bests": {}}, f"cabin.v1 holds the schema and the theme: {stored}")
-    light_bg = corner_rgb(pg)
-    check(dark_bg == [0, 0, 0] and light_bg == [255, 255, 255], f"canvas redraws in the theme: {dark_bg} -> {light_bg}")
-    pg.wait_for_timeout(400)
-    pg.screenshot(path=str(OUT / "b2_light_1920.png"))
-    pg.reload()
-    pg.wait_for_timeout(800)
-    check(pg.evaluate("document.documentElement.dataset.theme") == "light", "light survives a reload on a dark system")
-    check(not errs, f"no console errors after theme switch and reload: {errs}")
+    check(corner_rgb(pg) == [0, 0, 0], "T no longer switches the theme")
     check(all(u.startswith("file://") for u in reqs), f"no network request: {len(reqs)} requests, all file://")
+    ctx.close()
+
+    # A light system gets the same dark page.
+    ctx, pg, errs, reqs = open_page(b, "light")
+    check(corner_rgb(pg) == [0, 0, 0] and not errs, f"a light system still gets the dark panel {errs}")
     ctx.close()
 
     # ---- Seeded profiles ------------------------------------------------------
@@ -176,14 +171,13 @@ with sync_playwright() as pw:
     # migration and not shown as a per-train best.
     v1 = {"v": 1, "settings": {"theme": "light"}, "bests": {"light": {"handled": 3, "delay_min": 624.8, "put_backs": 1}}}
     ctx, pg, errs, reqs = open_page(b, "dark", seed=json.dumps(v1))
-    check(pg.evaluate("document.documentElement.dataset.theme") == "light", "seeded light profile opens light")
+    check(corner_rgb(pg) == [0, 0, 0], "a profile saved with the light theme opens dark")
     check(not pg.is_visible("#banner") and not errs, f"seeded profile: no banner, no console errors {errs}")
     check(all(u.startswith("file://") for u in reqs), "seeded profile: no network request")
-    pg.click("#theme")
-    pg.click("#theme")
     mig = json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))
     check(mig.get("v") == 2 and mig.get("bests") == {"light": {"handled": 3, "put_backs": 1}} and mig.get("v1_delay_totals") == {"light": 624.8},
-          f"v1 store migrates to v2 and keeps the old delay total aside: {mig}")
+          f"v1 store migrates to v2 on load, is written back, and keeps the old delay total aside: {mig}")
+    check(mig.get("settings") == {"theme": "light"}, f"the old theme setting is kept, unread: {mig.get('settings')}")
     ctx.close()
 
     for bad, why in (("not json", "not JSON"), (json.dumps({"v": 99}), "a future version")):
@@ -193,11 +187,10 @@ with sync_playwright() as pw:
         g0 = app(pg, "a.game_s()")
         pg.wait_for_timeout(500)
         check(app(pg, "a.game_s()") > g0, f"store holding {why}: the page still runs")
-        pg.click("#theme")
         # Guard 3 (B8): the unreadable copy moves to cabin.v1.corrupt and the
         # page saves again. Until B8 the copy was left in place, unsaved.
         check(pg.evaluate("localStorage.getItem('cabin.v1.corrupt')") == bad and json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))["v"] == 2,
-              f"store holding {why}: the copy is kept under cabin.v1.corrupt, and the theme is saved again")
+              f"store holding {why}: the copy is kept under cabin.v1.corrupt, and a readable store is written back at once")
         check(not errs, f"store holding {why}: no console errors {errs}")
         ctx.close()
 

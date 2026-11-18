@@ -9,7 +9,8 @@ shift ends at 08:00, pauses and saves; a best another tab saved is kept
 (per field); a store that cannot be read, when cabin.v1.corrupt already
 holds another copy, is left untouched and the result says bests are not
 saved; Practice shows no score and never ends; rack
-rows carry real train numbers and names; both themes; zero console
+rows carry real train numbers and names; the dot-matrix board shows the
+mode and the three numbers (dark only since PLAN-look.md); zero console
 errors; no network request.
 
 Every control is a real click, with one named exception copied from
@@ -114,6 +115,25 @@ def click_exit_until_set(pg, want_berth: bool) -> str:
     return text(pg, "#msg")
 
 
+def board_colours(pg) -> dict:
+    """Lit dots on the dot-matrix board, by LED role, and a fingerprint."""
+    return pg.evaluate("""() => {
+      const c = document.getElementById('board'), g = c.getContext('2d');
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      const cs = getComputedStyle(document.documentElement);
+      const p = document.createElement('canvas').getContext('2d');
+      const rgb = n => { p.fillStyle = cs.getPropertyValue(n).trim(); p.fillRect(0, 0, 1, 1); return p.getImageData(0, 0, 1, 1).data; };
+      const a = rgb('--led-a'), r = rgb('--led-r');
+      let amber = 0, red = 0, sum = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        sum = (sum * 31 + d[i] + d[i+1] * 7 + d[i+2] * 13) % 1000000007;
+        const near = c => Math.abs(d[i] - c[0]) < 24 && Math.abs(d[i+1] - c[1]) < 24 && Math.abs(d[i+2] - c[2]) < 24;
+        if (near(a)) amber++; else if (near(r)) red++;
+      }
+      return {amber, red, sum};
+    }""")
+
+
 def a_scored_shift(b) -> None:
     """Light, seed 1: the header, delay, a put-back, a handled train, the
     end of the shift, the saved best, and the best after a reload."""
@@ -125,6 +145,8 @@ def a_scored_shift(b) -> None:
     check(re.fullmatch(r"06:30:0\d", text(pg, "#clock")) is not None, f"the clock starts at 06:30: '{text(pg, '#clock')}'")
     # The first offer waits through those 2.4 s: delay may read 0.1.
     check((text(pg, "#handled"), text(pg, "#putbacks")) == ("0", "0") and float(text(pg, "#delay")) <= 0.1, f"the three numbers start at 0: {text(pg, '#handled')}, {text(pg, '#delay')}, {text(pg, '#putbacks')}")
+    board0 = board_colours(pg)
+    check(board0["amber"] > 200 and board0["red"] > 200, f"the dot-matrix board lights the shift in amber and the numbers in red: {board0}")
     offer = next(r for r in rack(pg) if r[4] == "accept")
     check(re.fullmatch(r"\d{5}", offer[2]) is not None and len(offer[6]) > 5, f"the offer carries a real number and name: {offer[2]} '{offer[6]}'")
     title = pg.locator(f'.bay .row[data-key="{offer[1]}"]').get_attribute("title")
@@ -168,6 +190,7 @@ def a_scored_shift(b) -> None:
     check(st.endswith(" set."), f"a departure set from the exit buttons: '{st}'")
     check(skip_until(pg, lambda: app(pg, "a.train_count()") == 0, 900), "the train left")
     check(text(pg, "#handled") == "1", f"one train handled: {text(pg, '#handled')}")
+    check(board_colours(pg)["sum"] != board0["sum"], "the board redraws when the numbers change")
 
     # Run out the shift with nobody at the panel.
     # Resume first, so the pause below is the page's own.
@@ -209,14 +232,13 @@ def a_scored_shift(b) -> None:
     ctx.close()
 
 
-def light_theme_and_bad_mode(b) -> None:
+def light_system_and_bad_mode(b) -> None:
     ctx = b.new_context(viewport=VIEW, color_scheme="light")
     t = Tab(ctx, "?mode=rush&seed=4")
     st = text(t.pg, "#msg")
     check('Mode "rush" is not one of' in st and text(t.pg, "#mode") == "normal", f"?mode=rush: '{st}', playing {text(t.pg, '#mode')}")
-    check(t.pg.evaluate("document.documentElement.dataset.theme") == "light", "light theme from the system")
-    t.pg.screenshot(path=str(OUT / "b7-normal-start-light.png"))
-    t.clean("bad mode, light")
+    t.pg.screenshot(path=str(OUT / "b7-normal-start.png"))
+    t.clean("bad mode, on a light system")
     ctx.close()
 
 
@@ -251,7 +273,7 @@ def unreadable_store(b) -> None:
 with sync_playwright() as pw:
     browser = pw.chromium.launch()
     a_scored_shift(browser)
-    light_theme_and_bad_mode(browser)
+    light_system_and_bad_mode(browser)
     practice(browser)
     unreadable_store(browser)
     browser.close()
