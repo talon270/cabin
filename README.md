@@ -120,6 +120,14 @@ Each rule constant in `consts.rs` names a row of `rails/research.md` and the
 phrase it rests on. `tests/ledger.rs` reads that file and fails if the row no
 longer holds the phrase, or if the file is missing. It does not skip.
 
+**A crowded signal head steps back, and a stalk points to its post.** Two
+Starters 10 m before one junction stood 3.3 px apart at the default view, and
+17 pairs were closer than the 44 px a click target needs. No stretch of the
+panel separates two posts that close. So when the default view is framed,
+each head takes the place nearest its post, along its own track, that is
+45 px from every other head, and a thin line joins it to the post. The sim
+and the trains still stop at the post. 17 pairs became 0.
+
 ## What is assumed and what is solid
 
 21 constants are tagged in `crates/sim/src/consts.rs`; 20 are `assumed`. The
@@ -139,10 +147,10 @@ the code.
 
 ## What is not right yet
 
-- **17 signal pairs at the default view sit closer than 44 px**, the hit-slop
-  goal. Five are under 13 px: two Starters 10 m before the same junction on
-  converging tracks. A click takes the nearest head; the exit buttons, the
-  rack and the menu reach every route without a canvas click.
+- **Three Homes off the default view stand 28 to 35 px apart.** HN3, HN4
+  and HN4b sit on portal tracks too short for a head to step back on. Every
+  head on the default view is at least 44 px from the next, at 1920 px and
+  at 1500 px.
 - **Delay reads large.** One ignored offer outweighs any number of short waits:
   a Light shift with one train handled scored 624.8 min.
 - **Platforms 15 and 16 are not worked.** Their only arrivals came from the

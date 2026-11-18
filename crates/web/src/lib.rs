@@ -59,6 +59,16 @@ const HIT_PX: f64 = 22.0;
 /// signals stand left of the line, and the head must not hide the track.
 const HEAD_OFF_PX: f64 = 8.0;
 const HEAD_R_PX: f64 = 4.5;
+/// Heads closer than this, CSS px, share a click target, so the hit-slop
+/// card's 44 px plus a pixel of margin. Two Starters 10 m before one
+/// junction stood 3 px apart: no stretch separates them, so a crowded head
+/// slides back along its own track, HEAD_STEP_M at a time, and a stalk
+/// joins it to the post. The sim and the train still stop at the post.
+const HEAD_GAP_PX: f64 = 45.0;
+const HEAD_STEP_M: f64 = 2.0;
+const HEAD_PASSES: usize = 4;
+/// A place on the panel and the unit direction faced there.
+type Place = ((f64, f64), (f64, f64));
 
 /// The yard drawn as a control panel: `u` along the station's long axis,
 /// `v` across it. Distances along the tracks are true; the spacing between
@@ -291,8 +301,13 @@ pub struct App {
     /// Panel bounds of everything drawn, and of the platform tracks.
     all: (f64, f64, f64, f64),
     platforms: (f64, f64, f64, f64),
-    /// Per signal: its panel position and the unit direction it faces.
-    sig_at: Vec<((f64, f64), (f64, f64))>,
+    /// Per signal: where its head may stand, as a panel position and the
+    /// unit direction it faces. Index 0 is the post; each next one is
+    /// HEAD_STEP_M further back along its own track.
+    sig_path: Vec<Vec<Place>>,
+    /// Per signal: the index into `sig_path` its head is drawn at; chosen by
+    /// `place_heads` when the default view is framed.
+    sig_pick: Vec<usize>,
     /// Per signal, the routes it is the entry of.
     from: Vec<Vec<RouteId>>,
     canvas: HtmlCanvasElement,
@@ -373,18 +388,26 @@ impl App {
         let shapes: Vec<Vec<(f64, f64)>> = yard.edges.iter().map(|e| panel.map_poly(&e.poly)).collect();
         let all = bounds(shapes.iter().flatten());
         let platforms = bounds(yard.platforms.iter().flat_map(|p| &shapes[p.edge]));
-        let sig_at = yard
+        let sig_path: Vec<Vec<_>> = yard
             .signals
             .iter()
             .map(|s| {
                 let e = &yard.edges[s.edge];
-                let (p, d) = at_metres(&e.poly, e.len, s.offset);
-                let d = if s.forward { d } else { (-d.0, -d.1) };
-                let (a, b) = (panel.map(p.0, p.1), panel.map(p.0 + d.0, p.1 + d.1));
-                let n = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
-                (a, ((b.0 - a.0) / n, (b.1 - a.1) / n))
+                // Back is away from the way the signal faces, to the edge's end.
+                let room = if s.forward { s.offset } else { e.len - s.offset };
+                let back = if s.forward { -HEAD_STEP_M } else { HEAD_STEP_M };
+                (0..=(room.max(0.0) / HEAD_STEP_M) as usize)
+                    .map(|k| {
+                        let (p, d) = at_metres(&e.poly, e.len, s.offset + back * k as f64);
+                        let d = if s.forward { d } else { (-d.0, -d.1) };
+                        let (a, b) = (panel.map(p.0, p.1), panel.map(p.0 + d.0, p.1 + d.1));
+                        let n = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
+                        (a, ((b.0 - a.0) / n, (b.1 - a.1) / n))
+                    })
+                    .collect()
             })
             .collect();
+        let sig_pick = vec![0; sig_path.len()];
         let world = World::shift(yard, profile, mode, u64::from(seed));
         let mut from = vec![Vec::new(); world.yard.signals.len()];
         for r in world.lock.routes() {
@@ -398,7 +421,8 @@ impl App {
             shapes,
             all,
             platforms,
-            sig_at,
+            sig_path,
+            sig_pick,
             from,
             canvas,
             ctx,
@@ -880,13 +904,45 @@ impl App {
         (self.cam.cx + (sx - self.w / 2.0) / s, self.cam.cy - (sy - self.h / 2.0) / s)
     }
 
-    /// A signal's head on screen: its point on the track, moved HEAD_OFF_PX
-    /// to the left of the direction it faces.
+    /// A signal's head on screen: the place `place_heads` chose on its
+    /// track, moved HEAD_OFF_PX to the left of the direction it faces.
     fn head_screen(&self, s: SignalId) -> (f64, f64) {
-        let ((u, v), (du, dv)) = self.sig_at[s];
+        self.head_xy(self.sig_path[s][self.sig_pick[s]])
+    }
+
+    fn head_xy(&self, ((u, v), (du, dv)): Place) -> (f64, f64) {
         let (x, y) = self.to_screen(u, v);
         // Screen direction is (du, -dv); its left is (-dv, -du).
         (x - dv * HEAD_OFF_PX, y - du * HEAD_OFF_PX)
+    }
+
+    /// Give each head the place nearest its post that stands HEAD_GAP_PX
+    /// from every other head, at the current zoom. Run when the default view
+    /// is framed: zooming in only spreads heads further. Each pass re-places
+    /// every head against all the others, so a head placed early can still
+    /// step back for one placed later.
+    /// ponytail: HEAD_PASSES fixed passes, not a solver; a head with no
+    /// clear place on its track takes the one farthest from the others.
+    fn place_heads(&mut self) {
+        let spots: Vec<Vec<(f64, f64)>> = self.sig_path.iter().map(|p| p.iter().map(|&c| self.head_xy(c)).collect()).collect();
+        self.sig_pick.fill(0);
+        for _ in 0..HEAD_PASSES {
+            for s in 0..spots.len() {
+                let pick = &self.sig_pick;
+                let room = |p: (f64, f64)| {
+                    (0..spots.len()).filter(|&o| o != s).map(|o| {
+                        let q = spots[o][pick[o]];
+                        (p.0 - q.0).hypot(p.1 - q.1)
+                    }).fold(f64::INFINITY, f64::min)
+                };
+                let mine = &spots[s];
+                let k = mine
+                    .iter()
+                    .position(|&p| room(p) >= HEAD_GAP_PX)
+                    .unwrap_or_else(|| (0..mine.len()).max_by(|&a, &b| room(mine[a]).total_cmp(&room(mine[b]))).unwrap_or(0));
+                self.sig_pick[s] = k;
+            }
+        }
     }
 
     fn portal_xy(&self, p: usize) -> (f64, f64) {
@@ -919,7 +975,7 @@ impl App {
 
     /// The signal that sets routes nearest (x, y), within HIT_PX.
     fn entry_at(&self, x: f64, y: f64) -> Option<SignalId> {
-        (0..self.sig_at.len())
+        (0..self.sig_path.len())
             .filter(|&s| !self.from[s].is_empty())
             .map(|s| {
                 let (hx, hy) = self.head_screen(s);
@@ -941,6 +997,7 @@ impl App {
         self.cam.z = s.ln();
         self.cam.zt = self.cam.z;
         self.cam.fitted = self.w > 1.0 && self.h > 1.0;
+        self.place_heads();
     }
 
     /// Advance the zoom spring and, once no drag or zoom holds it, the edge
@@ -1026,8 +1083,16 @@ impl App {
         let ctx = &self.ctx;
         ctx.set_line_width(1.0);
         ctx.set_stroke_style_str(fg);
-        for s in 0..self.sig_at.len() {
+        for s in 0..self.sig_path.len() {
             let (x, y) = self.head_screen(s);
+            // A head slid back from a crowded post: a stalk to the post.
+            if self.sig_pick[s] > 0 {
+                let (px, py) = self.head_xy(self.sig_path[s][0]);
+                ctx.begin_path();
+                ctx.move_to(px, py);
+                ctx.line_to(x, y);
+                ctx.stroke();
+            }
             ctx.set_fill_style_str(match self.world.aspect(s) {
                 Aspect::Red => "#e5484d",
                 Aspect::Yellow | Aspect::DoubleYellow => "#f5d90a",
@@ -1143,7 +1208,7 @@ impl App {
         // Signal names, beyond the head on the side away from the track.
         ctx.set_font("10px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
         for (k, s) in y.signals.iter().enumerate() {
-            let ((_, _), (du, dv)) = self.sig_at[k];
+            let ((_, _), (du, dv)) = self.sig_path[k][self.sig_pick[k]];
             let (x, yy) = self.head_screen(k);
             let _ = ctx.fill_text(&s.name, x - dv * 18.0, yy - du * 18.0);
         }
