@@ -206,7 +206,12 @@ The page stores your theme and your bests, per field and per mode, in
 `localStorage` under `cabin.v1` (schema 2; a schema 1 delay best was a shift total, and the
 migration keeps it under `v1_delay_totals` rather than show it as a per-train best). An unreadable or future-version
 copy is kept under `cabin.v1.corrupt` and a banner says so. It sends nothing
-anywhere. The repo is private on GitHub, `talon270/cabin`.
+anywhere. The repo is public on GitHub, `talon270/cabin`.
+
+**Play it at https://talon270.github.io/cabin/.** The `gh-pages` branch holds
+`dist/index.html` and an empty `.nojekyll`, nothing else. It is not rebuilt
+on push: after a change, run `./build.sh`, then copy `dist/index.html` to
+that branch and push it. Until then the link serves the older build.
 
 The build history, every slice's measurements and the open decisions are in
 `PLAN-cabin.md`.
