@@ -122,7 +122,7 @@ def guard3(b) -> None:
             saved = json.loads(stored(pg, "cabin.v1") or "null")
         except ValueError:
             saved = None
-        check(saved and saved.get("v") == 1 and "light" in saved.get("bests", {}) and "not saved" not in st, f"store {name}: the next best is saved: {saved and saved.get('bests')}")
+        check(saved and saved.get("v") == 2 and "light" in saved.get("bests", {}) and "not saved" not in st, f"store {name}: the next best is saved: {saved and saved.get('bests')}")
         clean(pg, f"store {name}")
         ctx.close()
 
@@ -193,7 +193,7 @@ def second_tab(b) -> None:
     both = json.loads(stored(a, "cabin.v1"))["bests"]["light"]
     da = float(text(a, "#delay"))
     quote("second tab", f"tab seed 2 saved {first}; tab seed 1 then saved, store holds {both}; seed 1 delay {da}")
-    check(both["delay_min"] == min(first["delay_min"], da) and both["handled"] == 0 and both["put_backs"] == 0, "second tab: the store keeps the better delay of the two")
+    check(both["delay_per_train"] == min(first["delay_per_train"], da) and both["handled"] == 0 and both["put_backs"] == 0, "second tab: the store keeps the better delay of the two")
     ctx.close()
 
 

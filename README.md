@@ -66,7 +66,10 @@ carries the shift you are playing.
 **The score is "held at red".** Trains handled counts trains that left by a
 portal. Delay counts game minutes a train stood outside a portal after it was
 due, at a red Home, or at a red Starter after its dwell; the dwell itself is
-not delay. Put-backs counts routes cancelled after a train took them or while
+not delay. The header shows delay per train: the total divided by the trains
+due so far in the shift, so a Light and a Peak shift read on one scale (an
+idle shift on seed 1: 50.8 min per train over 14 in Light, 48.1 over 25 in
+Peak). Put-backs counts routes cancelled after a train took them or while
 one ran up to the entry signal. The interlocking prevents collisions, so the
 score has no incidents.
 
@@ -151,8 +154,9 @@ the code.
   and HN4b sit on portal tracks too short for a head to step back on. Every
   head on the default view is at least 44 px from the next, at 1920 px and
   at 1500 px.
-- **Delay reads large.** One ignored offer outweighs any number of short waits:
-  a Light shift with one train handled scored 624.8 min.
+- **Delay per train still punishes an ignored offer hardest.** Each train
+  waits from its due time, so one left outside all shift adds up to 90 min
+  to the total. Per train, it no longer swamps the rest of the score.
 - **Platforms 15 and 16 are not worked.** Their only arrivals came from the
   south into berths with no departure, so those routes were removed.
 - **29 of 32 Starters stand inside the 30 m fouling length** of the junction
@@ -169,7 +173,8 @@ carry the same licence. The traffic research lives in `research/`, one ledger
 row per fact, with its source.
 
 The page stores your theme and your bests, per field and per mode, in
-`localStorage` under `cabin.v1` (schema 1). An unreadable or future-version
+`localStorage` under `cabin.v1` (schema 2; a schema 1 delay best was a shift total, and the
+migration keeps it under `v1_delay_totals` rather than show it as a per-train best). An unreadable or future-version
 copy is kept under `cabin.v1.corrupt` and a banner says so. It sends nothing
 anywhere. The repo is private and has no remote.
 

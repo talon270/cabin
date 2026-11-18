@@ -159,7 +159,7 @@ with sync_playwright() as pw:
     check(pg.evaluate("document.documentElement.dataset.theme") == "light", "theme button switches to light")
     check(pg.is_visible("#saved"), "[SAVED] shows inline after the switch")
     stored = json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))
-    check(stored == {"v": 1, "settings": {"theme": "light"}, "bests": {}}, f"cabin.v1 holds the schema and the theme: {stored}")
+    check(stored == {"v": 2, "settings": {"theme": "light"}, "bests": {}}, f"cabin.v1 holds the schema and the theme: {stored}")
     light_bg = corner_rgb(pg)
     check(dark_bg == [0, 0, 0] and light_bg == [255, 255, 255], f"canvas redraws in the theme: {dark_bg} -> {light_bg}")
     pg.wait_for_timeout(400)
@@ -172,10 +172,18 @@ with sync_playwright() as pw:
     ctx.close()
 
     # ---- Seeded profiles ------------------------------------------------------
-    ctx, pg, errs, reqs = open_page(b, "dark", seed=json.dumps({"v": 1, "settings": {"theme": "light"}, "bests": {}}))
+    # A v1 store: its delay best is a shift total, kept aside by the 1-to-2
+    # migration and not shown as a per-train best.
+    v1 = {"v": 1, "settings": {"theme": "light"}, "bests": {"light": {"handled": 3, "delay_min": 624.8, "put_backs": 1}}}
+    ctx, pg, errs, reqs = open_page(b, "dark", seed=json.dumps(v1))
     check(pg.evaluate("document.documentElement.dataset.theme") == "light", "seeded light profile opens light")
     check(not pg.is_visible("#banner") and not errs, f"seeded profile: no banner, no console errors {errs}")
     check(all(u.startswith("file://") for u in reqs), "seeded profile: no network request")
+    pg.click("#theme")
+    pg.click("#theme")
+    mig = json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))
+    check(mig.get("v") == 2 and mig.get("bests") == {"light": {"handled": 3, "put_backs": 1}} and mig.get("v1_delay_totals") == {"light": 624.8},
+          f"v1 store migrates to v2 and keeps the old delay total aside: {mig}")
     ctx.close()
 
     for bad, why in (("not json", "not JSON"), (json.dumps({"v": 99}), "a future version")):
@@ -188,7 +196,7 @@ with sync_playwright() as pw:
         pg.click("#theme")
         # Guard 3 (B8): the unreadable copy moves to cabin.v1.corrupt and the
         # page saves again. Until B8 the copy was left in place, unsaved.
-        check(pg.evaluate("localStorage.getItem('cabin.v1.corrupt')") == bad and json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))["v"] == 1,
+        check(pg.evaluate("localStorage.getItem('cabin.v1.corrupt')") == bad and json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))["v"] == 2,
               f"store holding {why}: the copy is kept under cabin.v1.corrupt, and the theme is saved again")
         check(not errs, f"store holding {why}: no console errors {errs}")
         ctx.close()

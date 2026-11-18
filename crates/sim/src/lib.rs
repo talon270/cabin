@@ -117,6 +117,9 @@ impl World {
         while let Some(&(_, p, o)) = self.pending.front().filter(|x| x.0 <= self.tick) {
             self.offers.entry(p).or_default().push_back(o);
             self.pending.pop_front();
+            if self.scoring() {
+                self.score.due += 1;
+            }
         }
     }
 

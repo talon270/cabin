@@ -530,10 +530,11 @@ impl App {
     }
 
     /// The three numbers and whether the shift is over: `[handled, delay
-    /// in game minutes, put-backs, over 0 or 1]`. Practice keeps them at 0.
+    /// in game minutes per train due, put-backs, over 0 or 1]`. Practice
+    /// keeps them at 0.
     pub fn score(&self) -> Vec<f64> {
         let s = &self.world.score;
-        vec![f64::from(s.handled), s.delay_min(), f64::from(s.put_backs), f64::from(u8::from(s.over.is_some()))]
+        vec![f64::from(s.handled), s.delay_per_train(), f64::from(s.put_backs), f64::from(u8::from(s.over.is_some()))]
     }
 
     pub fn paused(&self) -> bool {

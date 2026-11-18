@@ -221,3 +221,18 @@ fn a_put_back_is_a_cancel_in_the_face_of_a_train_only() {
     let _ = refused(&mut w, Action::CancelRoute(r.id));
     assert_eq!(w.score, before);
 }
+
+#[test]
+fn delay_is_shown_per_train_due() {
+    for m in SCORED {
+        let mut w = shift(m, 1);
+        let n = schedule(&profile(), m, 1, SHIFT_START_S, SHIFT_LEN_S).len() as u32;
+        w.step_ticks(SHIFT_LEN_S * TICK_HZ);
+        assert!(w.score.over.is_some());
+        assert_eq!(w.score.due, n, "{}: every scheduled train falls due in the shift", m.name());
+        let per = w.score.delay_per_train();
+        assert!((per * f64::from(n) - w.score.delay_min()).abs() < 1e-9, "{}: {per} per train over {n}", m.name());
+        println!("{}: {n} due, {:.1} min, {per:.1} min per train", m.name(), w.score.delay_min());
+    }
+    assert_eq!(shift(Mode::Practice, 1).score.due, 0, "Practice keeps no score");
+}

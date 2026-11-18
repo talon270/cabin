@@ -179,7 +179,7 @@ def a_scored_shift(b) -> None:
     check(app(pg, "a.paused()") and text(pg, "#pause").lower() == "resume", "the page pauses at the end")
     delay = float(text(pg, "#delay"))
     best = (store(pg) or {}).get("bests", {}).get("light")
-    check(best == {"handled": 1, "delay_min": delay, "put_backs": 1}, f"saved under bests.light: {best}")
+    check(best == {"handled": 1, "delay_per_train": delay, "put_backs": 1}, f"saved under bests.light: {best}")
     check(text(pg, "#b-handled") == "best 1" and text(pg, "#b-putbacks") == "best 1", f"header bests: '{text(pg, '#b-handled')}', '{text(pg, '#b-putbacks')}'")
     # The score stops: playing on changes nothing.
     pg.keyboard.press("Space")
@@ -199,12 +199,12 @@ def a_scored_shift(b) -> None:
     # loaded. This tab's next result must keep the other tab's handled.
     pg.keyboard.press("Space")
     other = store(pg)
-    other["bests"]["light"] = {"handled": 9, "delay_min": 9999.0, "put_backs": 5}
+    other["bests"]["light"] = {"handled": 9, "delay_per_train": 9999.0, "put_backs": 5}
     pg.evaluate(f"localStorage.setItem('cabin.v1', {json.dumps(json.dumps(other))})")
     app(pg, f"a.skip({SHIFT_S + 1})")
     frames(pg)
     merged = store(pg)["bests"]["light"]
-    check(merged["handled"] == 9 and merged["delay_min"] == delay and merged["put_backs"] == 0,
+    check(merged["handled"] == 9 and merged["delay_per_train"] == delay and merged["put_backs"] == 0,
           f"per-field merge with another tab's save: {merged}")
     ctx.close()
 

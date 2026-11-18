@@ -168,7 +168,7 @@
     <span><span class="label">Seed</span> <span class="val" id="seed">-</span></span>
     <span><span class="label">Mode</span> <span id="mode">-</span> <span class="best" id="window"></span></span>
     <span id="scores"><span class="label">Handled</span> <span class="val" id="handled">0</span> <span class="best" id="b-handled"></span>
-      &nbsp; <span class="label">Delay min</span> <span class="val" id="delay">0.0</span> <span class="best" id="b-delay"></span>
+      &nbsp; <span class="label">Delay min/train</span> <span class="val" id="delay">0.0</span> <span class="best" id="b-delay"></span>
       &nbsp; <span class="label">Put back</span> <span class="val" id="putbacks">0</span> <span class="best" id="b-putbacks"></span></span>
     <span class="grow"></span>
     <span class="saved" id="saved">[Saved]</span>
@@ -227,11 +227,23 @@ window.CABIN = (() => {
   // namespaced key keeps cabin from colliding with other local tools.
   const STORE_KEY = "cabin.v1";
   const CORRUPT_KEY = STORE_KEY + ".corrupt";
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
   const systemTheme = () => matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
   const DEFAULTS = () => ({ v: SCHEMA_VERSION, settings: { theme: systemTheme() }, bests: {} });
-  // Each entry upgrades from version n to n + 1. None yet.
-  const MIGRATIONS = {};
+  // Each entry upgrades from version n to n + 1.
+  //   1 to 2: delay became minutes per train due. A v1 best is a shift's
+  //   total, which cannot be divided without its train count, so it is kept
+  //   under `v1_delay_totals` and not shown as a best.
+  const MIGRATIONS = {
+    1: s => {
+      const old = {};
+      if (plain(s.bests)) for (const [m, b] of Object.entries(s.bests)) {
+        if (plain(b) && "delay_min" in b) { old[m] = b.delay_min; delete b.delay_min; }
+      }
+      if (Object.keys(old).length) s.v1_delay_totals = old;
+      return { ...s, v: 2 };
+    },
+  };
   const plain = o => typeof o === "object" && o !== null && !Array.isArray(o);
   const el = id => document.getElementById(id);
 
@@ -667,7 +679,7 @@ window.CABIN = (() => {
   // A best is kept per field, each in its own direction: more trains
   // handled, less delay, fewer put-backs. One shift can set one field and
   // not another, and a best can only improve.
-  const FIELDS = [["handled", (a, b) => Math.max(a, b)], ["delay_min", (a, b) => Math.min(a, b)], ["put_backs", (a, b) => Math.min(a, b)]];
+  const FIELDS = [["handled", (a, b) => Math.max(a, b)], ["delay_per_train", (a, b) => Math.min(a, b)], ["put_backs", (a, b) => Math.min(a, b)]];
   const num = x => typeof x === "number" && Number.isFinite(x) && x >= 0;
   function merge(a, b) {
     if (!plain(a)) return plain(b) ? { ...b } : null;
@@ -699,7 +711,7 @@ window.CABIN = (() => {
   function renderBests(mode) {
     const b = plain(state.bests[mode]) ? state.bests[mode] : {};
     el("b-handled").textContent = num(b.handled) ? `best ${b.handled}` : "";
-    el("b-delay").textContent = num(b.delay_min) ? `best ${fmtDelay(b.delay_min)}` : "";
+    el("b-delay").textContent = num(b.delay_per_train) ? `best ${fmtDelay(b.delay_per_train)}` : "";
     el("b-putbacks").textContent = num(b.put_backs) ? `best ${b.put_backs}` : "";
   }
   let shownScore = "", ended = false;
@@ -715,11 +727,11 @@ window.CABIN = (() => {
     if (!over || ended) return;
     ended = true;
     const mode = app.mode();
-    const better = recordBest(mode, { handled, delay_min: Math.round(delay * 10) / 10, put_backs: putBacks });
+    const better = recordBest(mode, { handled, delay_per_train: Math.round(delay * 10) / 10, put_backs: putBacks });
     renderBests(mode);
     if (!app.paused()) togglePause();
-    const names = { handled: "trains handled", delay_min: "delay", put_backs: "put-backs" };
-    app_say(`Shift over at ${hhmm(app.shift_window()[1])}: ${handled} train${handled === 1 ? "" : "s"} handled, ${fmtDelay(delay)} min delay, ${putBacks} put back.`
+    const names = { handled: "trains handled", delay_per_train: "delay per train", put_backs: "put-backs" };
+    app_say(`Shift over at ${hhmm(app.shift_window()[1])}: ${handled} train${handled === 1 ? "" : "s"} handled, ${fmtDelay(delay)} min delay per train, ${putBacks} put back.`
       + (better.length ? ` New best: ${better.map(k => names[k]).join(", ")}.` : " No new best.")
       + (writable ? "" : " Bests are not saved in this browser.")
       + " Ctrl K for a replay or a new shift; Space plays on, unscored.");
