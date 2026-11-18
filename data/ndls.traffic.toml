@@ -26,6 +26,8 @@ trains_per_day_quiet = { v = 245, src = "V-04", tag = "assumed" }
 hourly_weights = { v = [3, 2, 0, 2, 5, 9, 20, 16, 14, 22, 19, 10, 13, 14, 9, 7, 14, 21, 18, 12, 10, 12, 10, 13], src = "V-12", tag = "secondary" }
 # Arrivals from the north side (Sadar Bazar), the rest from the south and east (Shivaji Bridge). One 2016 timetable counted as daily.
 north_share = { v = 0.333, src = "V-22, V-23, V-24", tag = "assumed" }
+# Share of trains that pass through, 103 of 277 (V-02's parts; they sum 2 over V-03's 275). The rest originate or terminate. The pool's 19 of 139 must not set this (traffic.md).
+through_share = { v = 0.372, src = "V-02, V-03", tag = "derived" }
 
 [mix]  # share of trains by class; the three sum to 1.0
 emu_local = { v = 0.28, src = "V-27", tag = "assumed" }

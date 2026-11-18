@@ -4,6 +4,9 @@
 //!   · Route: its path, the points it sets and their lie, its overlap, and
 //!     `holds`, every resource it locks
 //!
+//! A route into a berth whose Starter sets no route is dropped: the train
+//! could never leave.
+//!
 //! A route runs from its entry signal to the first signal ahead that faces
 //! the same way, or out through a portal. It never passes a signal for its
 //! own direction, so a train always meets the exit signal it was routed to.
@@ -208,6 +211,15 @@ pub fn build_routes(yard: &Yard) -> Vec<Route> {
             };
             routes.push(Route { id: routes.len(), entry, exit, path, points, overlap, holds, len_m: total as f64 / 100.0 });
         }
+    }
+    // A berth whose Starter sets no route is a dead end: no train reverses
+    // in this model, so a train sent there stays for the rest of the shift.
+    // You chose on 2026-11-17 to remove such routes; on the 2026-11-17 yard
+    // they are the 10 from the south into ST15N and ST16N.
+    let leaves: BTreeSet<usize> = routes.iter().map(|r| r.entry).collect();
+    routes.retain(|r| !matches!(r.exit, Exit::Berth { starter, .. } if !leaves.contains(&starter)));
+    for (k, r) in routes.iter_mut().enumerate() {
+        r.id = k;
     }
     routes
 }

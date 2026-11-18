@@ -8,12 +8,17 @@
 #
 # The box is the one measured on 2026-11-14 (plan A1): 185 track ways, 79
 # switches, 16 platform ways.
+#
+# CABIN_DATA and OVERPASS_URL exist for the failure drill in tools/verify_b8.py:
+# a scratch folder and a canned answer, so the real file is never at risk.
 set -eu
 cd "$(dirname "$0")"
-mkdir -p data
-tmp="data/ndls.osm.json.tmp"
+DATA="${CABIN_DATA:-data}"
+URL="${OVERPASS_URL:-https://overpass-api.de/api/interpreter}"
+mkdir -p "$DATA"
+tmp="$DATA/ndls.osm.json.tmp"
 curl -sS --fail --max-time 180 -A 'cabin-osm/0.1 (offline game, one fetch per station)' \
-  --data-urlencode data@- https://overpass-api.de/api/interpreter -o "$tmp" <<'Q'
+  --data-urlencode data@- "$URL" -o "$tmp" <<'Q'
 [out:json][timeout:90];
 (
   way(28.632,77.210,28.652,77.228)["railway"~"^(rail|platform|siding|yard)$"];
@@ -37,5 +42,5 @@ if grep -q '"remark"' "$tmp"; then
   grep -o '"remark"[^}]*' "$tmp" | head -c 300 >&2; echo >&2
   rm -f "$tmp"; exit 1
 fi
-mv "$tmp" "data/ndls.osm.json"
-echo "wrote data/ndls.osm.json ($(wc -c < data/ndls.osm.json) bytes)"
+mv "$tmp" "$DATA/ndls.osm.json"
+echo "wrote $DATA/ndls.osm.json ($(wc -c < "$DATA/ndls.osm.json") bytes)"

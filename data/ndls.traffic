@@ -1,0 +1,152 @@
+# cabin traffic profile, format 1. Written by cabin-osm from data/ndls.traffic.toml; do not edit.
+# Values only: each one's source and tag are in the .toml.
+written 2026-11-15
+hourly 3 2 0 2 5 9 20 16 14 22 19 10 13 14 9 7 14 21 18 12 10 12 10 13
+north_share 0.333
+through_share 0.372
+terminating 600 1200
+class emu_local 0.28 120 600
+class express 0.41 900 1500
+class rajdhani 0.148 900 1500
+class shatabdi 0.116 900 1500
+class duronto 0.046 900 1500
+class vande_bharat 0 900 1500
+train 12301 rajdhani 548.6 terminates Howrah - New Delhi Rajdhani Express (Via Gaya)
+train 12302 rajdhani 548.6 starts New Delhi - Howrah Rajdhani Express (Via Gaya)
+train 12305 rajdhani 548.6 terminates Howrah - New Delhi Rajdhani Express (Via Patna)
+train 12306 rajdhani 548.6 starts New Delhi - Howrah Rajdhani Express (Via Patna)
+train 12309 rajdhani 548.6 terminates Rajendra Nagar T - New Delhi Tejas Rajdhani Express
+train 12310 rajdhani 548.6 starts New Delhi - Rajendra Nagar T Tejas Rajdhani Express
+train 12313 rajdhani 548.6 terminates Sealdah - New Delhi Rajdhani Express
+train 12314 rajdhani 548.6 starts New Delhi - Sealdah Rajdhani Express
+train 12423 rajdhani 548.6 terminates Dibrugarh - New Delhi Rajdhani Express
+train 12424 rajdhani 548.6 starts New Delhi - Dibrugarh Rajdhani Express
+train 12425 rajdhani 548.6 starts New Delhi - Jammu Tawi Rajdhani Express
+train 12426 rajdhani 548.6 terminates Jammu Tawi - New Delhi Rajdhani Express
+train 12441 rajdhani 548.6 terminates Bilaspur - New Delhi Rajdhani Express
+train 12442 rajdhani 548.6 starts New Delhi - Bilaspur Rajdhani Express
+train 12453 rajdhani 548.6 terminates Ranchi - New Delhi Rajdhani Express (via Chopan)
+train 12454 rajdhani 548.6 starts New Delhi - Ranchi Rajdhani Express (via Chopan)
+train 12951 rajdhani 548.6 terminates Mumbai Central - New Delhi Rajdhani Express
+train 12952 rajdhani 548.6 starts New Delhi - Mumbai Central Rajdhani Express
+train 12957 rajdhani 548.6 terminates Swarna Jayanti Rajdhani Express
+train 12958 rajdhani 548.6 starts Swarna Jayanti Rajdhani Express
+train 20839 rajdhani 548.6 terminates Ranchi - New Delhi Rajdhani Express (via Bokaro Steel City)
+train 20840 rajdhani 548.6 starts New Delhi - Ranchi Rajdhani Express (Via Bokaro Steel City)
+train 22811 rajdhani 548.6 terminates Bhubaneswar - New Delhi Tejas Rajdhani Express (via Adra)
+train 22812 rajdhani 548.6 starts New Delhi - Bhubaneswar Tejas Rajdhani Express (via Adra)
+train 22823 rajdhani 548.6 terminates Bhubaneswar - New Delhi Tejas Rajdhani Express (via Tatanagar)
+train 22824 rajdhani 548.6 starts New Delhi - Bhubaneswar Tejas Rajdhani Express (Via Tatanagar)
+train 12001 shatabdi 404.6 terminates Shatabdi Express
+train 12002 shatabdi 404.6 starts Shatabdi Express
+train 12003 shatabdi 404.6 terminates Lucknow Jn - New Delhi Swarn Shatabdi Express
+train 12004 shatabdi 404.6 starts New Delhi - Lucknow Jn. Swarn Shatabdi Express
+train 12005 shatabdi 404.6 starts Shatabdi Express
+train 12006 shatabdi 404.6 terminates Shatabdi Express
+train 12011 shatabdi 404.6 starts Shatabdi Express
+train 12012 shatabdi 404.6 terminates Shatabdi Express
+train 12013 shatabdi 404.6 starts Shatabdi Express
+train 12014 shatabdi 404.6 terminates Shatabdi Express
+train 12015 shatabdi 404.6 starts New Delhi - Daurai (Ajmer) Shatabdi Express
+train 12016 shatabdi 404.6 terminates Daurai (Ajmer) - New Delhi Shatabdi Express
+train 12017 shatabdi 404.6 starts New Delhi - Dehradun Shatabdi Express
+train 12018 shatabdi 404.6 terminates Dehradun - New Delhi Shatabdi Express
+train 12029 shatabdi 404.6 starts Swarna Jayanti Shatabdi Express
+train 12030 shatabdi 404.6 terminates Swarna Jayanti Shatabdi Express
+train 12031 shatabdi 404.6 starts Shatabdi Express
+train 12032 shatabdi 404.6 terminates Shatabdi Express
+train 12033 shatabdi 404.6 terminates Kanpur Central - New Delhi Shatabdi Express
+train 12034 shatabdi 404.6 starts New Delhi - Kanpur Central Shatabdi Express
+train 12039 shatabdi 404.6 terminates Shatabdi Express
+train 12040 shatabdi 404.6 starts Shatabdi Express
+train 12045 shatabdi 404.6 starts Shatabdi Express
+train 12046 shatabdi 404.6 terminates Shatabdi Express
+train 12055 express 356.6 starts Jan Shatabdi Express
+train 12056 express 356.6 terminates Jan Shatabdi Express
+train 12057 express 356.6 starts Jan Shatabdi Express
+train 12058 express 356.6 terminates Jan Shatabdi Express
+train 12259 duronto 476.6 through Sealdah - Bikaner AC Duronto Express
+train 12260 duronto 476.6 through Bikaner - Sealdah AC Duronto Express
+train 12273 duronto 476.6 terminates Howrah - New Delhi Duronto Express
+train 12274 duronto 476.6 starts New Delhi - Howrah Duronto Express
+train 12281 duronto 476.6 terminates Bhubaneswar - New Delhi Duronto Express
+train 12282 duronto 476.6 starts New Delhi - Bhubaneswar Duronto Express
+train 22435 vande_bharat 384.0 terminates Vande Bharat Express
+train 22436 vande_bharat 384.0 starts Vande Bharat Express
+train 22439 vande_bharat 384.0 starts Vande Bharat Express
+train 22440 vande_bharat 384.0 terminates Vande Bharat Express
+train 22447 vande_bharat 384.0 starts Vande Bharat Express
+train 22448 vande_bharat 384.0 terminates Vande Bharat Express
+train 12275 express 500.6 terminates Prayagraj - New Delhi Humsafar Express
+train 12276 express 500.6 starts New Delhi - Prayagraj Humsafar Express
+train 12349 express 500.6 terminates Godda - New Delhi Humsafar Express
+train 12350 express 500.6 starts New Delhi - Godda Humsafar Express
+train 82501 express 356.6 terminates Lucknow Jn. - New Delhi IRCTC Tejas Express
+train 82502 express 356.6 starts New Delhi - Lucknow Jn. IRCTC Tejas Express
+train 12877 express 452.6 terminates Ranchi - New Delhi Garib Rath Express
+train 12878 express 452.6 starts New Delhi - Ranchi Garib Rath Express
+train 12229 express 530.6 terminates Lucknow Mail
+train 12304 express 530.6 through Poorva Express (Via Patna)
+train 12391 express 530.6 terminates Shramjeevi SF Express
+train 12392 express 530.6 starts Shramjeevi SF Express
+train 12397 express 530.6 terminates Mahabodhi SF Express
+train 12398 express 530.6 starts Mahabodhi SF Express
+train 12417 express 530.6 terminates Prayagraj Express
+train 12418 express 530.6 starts Prayagraj Express
+train 12419 express 530.6 terminates Gomti Express
+train 12420 express 530.6 starts Gomti Express
+train 12445 express 530.6 starts Uttar Sampark Kranti Express
+train 12446 express 530.6 terminates Uttar Sampark Kranti Express
+train 12497 express 530.6 starts Shan-e-Punjab Express
+train 12498 express 530.6 terminates Shan-e-Punjab Express
+train 12555 express 530.6 through Gorakhdham SF Express
+train 12559 express 530.6 terminates Shiv Ganga SF Express
+train 12560 express 530.6 starts Shiv Ganga SF Express
+train 12561 express 530.6 terminates Swatantrata Senani Express
+train 12562 express 530.6 starts Swatantrata Senani Express
+train 12565 express 530.6 terminates Bihar Sampark Kranti Express
+train 12566 express 530.6 starts Bihar Sampark Kranti Express
+train 12615 express 530.6 terminates Grand Trunk Express
+train 12616 express 530.6 starts Grand Trunk Express
+train 12621 express 530.6 terminates Tamil Nadu Express
+train 12622 express 530.6 starts Tamil Nadu Express
+train 12625 express 530.6 terminates Kerala SF Express
+train 12626 express 530.6 starts Kerala Express
+train 12627 express 530.6 terminates Karnataka SF Express
+train 12628 express 530.6 starts Karnataka SF Express
+train 12724 express 530.6 starts Telangana Express
+train 20451 express 530.6 terminates Sogaria - New Delhi Intercity SF Express
+train 20452 express 530.6 starts New Delhi - Sogaria Intercity SF Express
+train 12230 express 530.6 starts Lucknow Mail
+train 12303 express 530.6 through Poorva Express (via Patna)
+train 12723 express 530.6 terminates Telangana Express
+train 14211 express 530.6 terminates Intercity Express
+train 14212 express 530.6 starts Intercity Express
+train 51901 emu_local 207.6 through AGRA CANTT - OLD DELHI Passenger
+train 51902 emu_local 207.6 through OLD DELHI - AGRA CANTT Passenger
+train 54473 emu_local 207.6 through OLD DELHI - SAHARANPUR Passenger
+train 54474 emu_local 207.6 through SAHARANPUR - OLD DELHI Passenger
+train 54539 emu_local 207.6 through HAZRAT NIZAMUDDIN - AMBALA CANTT Passenger
+train 54540 emu_local 207.6 through AMBALA CANTT - HAZRAT NIZAMUDDIN Passenger
+train 04471 emu_local 264.0 through GHAZIABAD - PANIPAT MEMU Express Special (UnReserved)
+train 04472 emu_local 264.0 through PANIPAT - GHAZIABAD MEMU Express Special (UnReserved)
+train 64062 emu_local 264.0 through OLD DELHI - PALWAL Local
+train 64064 emu_local 264.0 through OLD DELHI - PALWAL Local
+train 64074 emu_local 264.0 starts KOSI KALAN - NEW DELHI Local
+train 64076 emu_local 264.0 starts NEW DELHI - PALWAL Local
+train 64078 emu_local 264.0 starts NEW DELHI - PALWAL Local
+train 64080 emu_local 264.0 starts NEW DELHI - PALWAL Local
+train 64084 emu_local 264.0 starts NEW DELHI - PALWAL Local
+train 64089 emu_local 264.0 through HAZRAT NIZAMUDDIN Parikrama Local
+train 64095 emu_local 264.0 starts NEW DELHI - SHAKURBASTI Local
+train 64449 emu_local 264.0 terminates GHAZIABAD - NEW DELHI Ladies Special Local
+train 64450 emu_local 264.0 starts NEW DELHI - GHAZIABAD Ladies Special Local
+train 64464 emu_local 264.0 terminates PANIPAT - NEW DELHI MEMU
+train 64466 emu_local 264.0 terminates PANIPAT - NEW DELHI MEMU
+train 64471 emu_local 264.0 through GHAZIABAD - PANIPAT MEMU
+train 64472 emu_local 264.0 through PANIPAT - GHAZIABAD MEMU
+train 64491 emu_local 264.0 terminates PALWAL - NEW DELHI Ladies Special Local
+train 64492 emu_local 264.0 starts NEW DELHI - PALWAL Ladies Special Local
+train 64534 emu_local 264.0 through PANIPAT - GHAZIABAD MEMU
+train 64911 emu_local 264.0 starts NEW DELHI - ROHTAK MEMU
+train 64912 emu_local 264.0 terminates ROHTAK - NEW DELHI MEMU

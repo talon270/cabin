@@ -63,6 +63,7 @@ fn kind(r: &Refusal) -> &'static str {
         Refusal::NoLineClear { .. } => "NoLineClear",
         Refusal::TrainPastSignal { .. } => "TrainPastSignal",
         Refusal::ApproachLocked { .. } => "ApproachLocked",
+        Refusal::NotOffered { .. } => "NotOffered",
     }
 }
 

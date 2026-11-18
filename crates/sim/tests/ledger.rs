@@ -11,8 +11,11 @@ use std::path::Path;
 #[test]
 fn every_cited_ledger_row_holds_its_phrase() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let ledger = std::fs::read_to_string(root.join("../../../../rails/research.md"))
-        .expect("rails/research.md must sit beside games/: the rules are checked against it");
+    // CABIN_LEDGER points at an edited copy for the failure drill in
+    // tools/verify_b8.py; `rails/` itself is never written (plan, out of scope).
+    let path = std::env::var_os("CABIN_LEDGER").map_or_else(|| root.join("../../../../rails/research.md"), Into::into);
+    let ledger = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{}: {e}. rails/research.md must sit beside games/: the rules are checked against it", path.display()));
     let mut cited = Vec::new();
     let mut files: Vec<_> = std::fs::read_dir(root.join("src")).unwrap().map(|e| e.unwrap().path()).collect();
     files.sort();

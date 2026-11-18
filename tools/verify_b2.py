@@ -3,7 +3,7 @@
 Checks the B2 "done" line of PLAN-cabin.md: zero console errors on a fresh
 and a seeded profile, both themes, 1920 px, no network request. Plus what
 the skeleton must do: draw the yard, pan 1:1, rubber-band past an edge and
-spring back, zoom about the cursor, run the skeleton train, save the theme.
+spring back, zoom about the cursor, run the sim clock, save the theme.
 
 Read-only hooks on CABIN.app give screen positions; every action is a real
 click, drag or wheel. Usage: python3 tools/verify_b2.py <scratch folder>
@@ -96,13 +96,13 @@ with sync_playwright() as pw:
     check(share > 0.01, f"the yard is drawn: {share:.1%} of canvas pixels inked")
     pg.screenshot(path=str(OUT / "b2_dark_1920.png"))
 
-    # Skeleton train runs; clock runs.
-    h0, t0 = app(pg, "a.train_head_m()"), pg.text_content("#clock")
-    p0 = app(pg, "a.train_screen()")
+    # The sim runs at TIME_SCALE; the clock follows it. (Until B6 this
+    # checked the skeleton train, which B6 removed.)
+    g0, t0 = app(pg, "a.game_s()"), pg.text_content("#clock")
     pg.wait_for_timeout(1200)
-    h1, p1 = app(pg, "a.train_head_m()"), app(pg, "a.train_screen()")
-    check(10 < h1 - h0 < 25, f"skeleton train moves at about 13.9 m/s: {h1 - h0:.1f} m in 1.2 s")
-    check(p0 != p1, f"its drawn head moves: {p0[0]:.0f},{p0[1]:.0f} -> {p1[0]:.0f},{p1[1]:.0f}")
+    g1 = app(pg, "a.game_s()")
+    k = app(pg, "a.time_scale()")
+    check(0.6 * k * 1.2 < g1 - g0 < 1.4 * k * 1.2, f"game time runs at about x{k}: {g1 - g0:.1f} game s in 1.2 real s")
     pg.wait_for_timeout(1000)
     check(pg.text_content("#clock") != t0, f"clock advances: {t0} -> {pg.text_content('#clock')}")
 
@@ -132,6 +132,13 @@ with sync_playwright() as pw:
     # Past the left edge: the map gives way less than the pointer, then
     # springs back inside on release.
     u0, u1, v0, v1 = app(pg, "a.panel_bounds()")
+    # Since B6 the default view frames the platforms, farther from the left
+    # edge: plain drags bring the centre within 300 px of it first.
+    for _ in range(10):
+        if (app(pg, "a.centre()")[0] - u0) * app(pg, "a.zoom()") < 300:
+            break
+        pg.mouse.move(ox + 100, oy + 500); pg.mouse.down(); pg.mouse.move(ox + 1100, oy + 500, steps=10); pg.mouse.up()
+        pg.wait_for_timeout(100)
     pg.mouse.move(ox + 100, oy + 500); pg.mouse.down()
     for step in range(1, 31):
         pg.mouse.move(ox + 100 + step * 100, oy + 500)
@@ -175,11 +182,14 @@ with sync_playwright() as pw:
         ctx, pg, errs, reqs = open_page(b, "dark", seed=bad)
         text = pg.text_content("#banner") if pg.is_visible("#banner") else ""
         check("could not be read" in text, f"store holding {why}: banner says so: {text!r}")
-        h0 = app(pg, "a.train_head_m()")
+        g0 = app(pg, "a.game_s()")
         pg.wait_for_timeout(500)
-        check(app(pg, "a.train_head_m()") > h0, f"store holding {why}: the page still runs")
+        check(app(pg, "a.game_s()") > g0, f"store holding {why}: the page still runs")
         pg.click("#theme")
-        check(pg.evaluate("localStorage.getItem('cabin.v1')") == bad, f"store holding {why}: the saved copy is left untouched")
+        # Guard 3 (B8): the unreadable copy moves to cabin.v1.corrupt and the
+        # page saves again. Until B8 the copy was left in place, unsaved.
+        check(pg.evaluate("localStorage.getItem('cabin.v1.corrupt')") == bad and json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))["v"] == 1,
+              f"store holding {why}: the copy is kept under cabin.v1.corrupt, and the theme is saved again")
         check(not errs, f"store holding {why}: no console errors {errs}")
         ctx.close()
 

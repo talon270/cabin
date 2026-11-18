@@ -10,8 +10,8 @@
 /// assumed: how far the panel stretches the cross-track direction (plan A5).
 /// NDLS's 16 platform tracks sit in 115 m across, so at true scale
 /// neighbouring signals are a few pixels apart. Real control panels are
-/// schematic for the same reason. 6 is the starting value; B6 sets it from
-/// the 44 px hit-slop check.
+/// schematic for the same reason. You kept 6 on 2026-11-17 and chose a
+/// closer default view instead; B6's 44 px check runs at that view.
 pub const PANEL_STRETCH: f64 = 6.0;
 
 /// solid: the line beyond a signal that must be clear before the signal in
@@ -57,6 +57,40 @@ pub const FOULING_M: f64 = 30.0;
 /// be sent the same way, seconds. It stands in for Line Clear from the
 /// block station in advance (C3-148 "Line Clear").
 pub const BLOCK_HEADWAY_S: u32 = 180;
+
+/// assumed: game seconds per real second. Chosen by you on 2026-11-17 from
+/// the B5 soak: at 4 the busy day asks about 2.0 route settings per real
+/// minute on average and 2.6 in the peak hour.
+pub const TIME_SCALE: f64 = 4.0;
+
+/// assumed: the game clock when a shift begins, seconds after midnight:
+/// 06:30. Chosen by you on 2026-11-18 so a shift runs into the 07:00 hour,
+/// the busy day's second-busiest morning hour (20 trains, V-12).
+pub const SHIFT_START_S: u32 = 6 * 3600 + 1800;
+
+/// assumed: a scored shift's length in game seconds: 90 minutes, which is
+/// 22.5 real minutes at TIME_SCALE 4. Chosen by you on 2026-11-18. Fixed, so
+/// bests compare like with like.
+pub const SHIFT_LEN_S: u32 = 90 * 60;
+
+/// assumed: Light's share of the busy day's hourly rate (V-12).
+pub const LIGHT_FRACTION: f64 = 0.5;
+
+/// assumed: Normal's share of the busy day's hourly rate (V-12).
+pub const NORMAL_FRACTION: f64 = 0.75;
+
+/// assumed: Peak's share of the busy day's hourly rate (V-12): all of it.
+pub const PEAK_FRACTION: f64 = 1.0;
+
+/// assumed: the fewest trains Practice offers (plan B7: 2 to 6, no score).
+pub const PRACTICE_MIN: u32 = 2;
+
+/// assumed: the most trains Practice offers.
+pub const PRACTICE_MAX: u32 = 6;
+
+/// assumed: Practice offers its trains within this many game seconds of
+/// the start: 30 minutes, 7.5 real minutes.
+pub const PRACTICE_SPREAD_S: u32 = 30 * 60;
 
 /// assumed: train acceleration, m/s².
 pub const ACCEL_MS2: f64 = 0.3;

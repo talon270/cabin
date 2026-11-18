@@ -1,20 +1,26 @@
 //! CABIN-WEB · BROWSER SHELL
-//!   · App: the wasm object the page drives, one per canvas
+//!   · App: the wasm object the page drives, one per canvas; it owns the
+//!     sim `World` and steps it TIME_SCALE times real time
 //!   · Panel: the yard turned to its long axis, track spacing stretched by
 //!     PANEL_STRETCH about a measured centreline
 //!   · Camera: pan 1:1, rubber band past the yard's edges, zoom on a spring
-//!     about the cursor
-//!   · skeleton train (B2 only): one block run along a fixed path, so the
-//!     draw loop and the hooks have something moving; B4's trains replace it
-//!   · draw: tracks, platform and portal labels, the train
-//!   · test hooks: read-only, for Playwright
+//!     about the cursor; the default view frames the platforms
+//!   · controls: click an entry signal, then an exit; the route is
+//!     previewed between the clicks; Esc clears; a refusal is one line
+//!   · rack and command rows: tab-separated text the page lays out
+//!   · draw: tracks, set routes, trains, signal heads, labels
+//!   · test hooks: for Playwright; all read-only except `skip`
 //!
 //! Thin on purpose: real frame time and input come in from the page's
 //! JavaScript, draw calls go out to a Canvas 2D context. No game rule lives
 //! here; if it would matter in a headless test, it belongs in `cabin-sim`.
 
-use cabin_sim::consts::PANEL_STRETCH;
-use cabin_sim::yard::{Kind, Yard};
+use cabin_sim::consts::{PANEL_STRETCH, SHIFT_LEN_S, SHIFT_START_S, TICK_HZ, TIME_SCALE};
+use cabin_sim::interlock::Aspect;
+use cabin_sim::route::{Exit, Res, RouteId, SignalId};
+use cabin_sim::traffic::{Mode, NDLS_TRAFFIC, Profile};
+use cabin_sim::yard::{Kind, SignalKind, Yard};
+use cabin_sim::{Action, World};
 use wasm_bindgen::prelude::*;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
@@ -46,14 +52,13 @@ const BIN_M: f64 = 50.0;
 const SMOOTH_BINS: usize = 2;
 const DENSIFY_M: f64 = 25.0;
 
-/// The skeleton train: portal N1 to platform 1 over running track, found by
-/// a legal search over the B0 yard (points stem to leg only). Edge indices
-/// of `data/ndls.yard` as extracted 2026-11-15; a re-extract that breaks the
-/// chain stops the page with a banner, and B4 deletes all of this.
-const SKELETON_PATH: [usize; 5] = [80, 79, 78, 41, 40];
-/// 50 km/h, the plan's starting SPEED_NORMAL_KMH, in real time.
-const SKELETON_SPEED_MS: f64 = 13.9;
-const SKELETON_LEN_M: f64 = 400.0;
+/// Hit slop (UI card No. 12): a click picks the nearest target within
+/// this many CSS px, so each target is 44 px across while drawn small.
+const HIT_PX: f64 = 22.0;
+/// A signal head stands this far left of its track, CSS px: Indian
+/// signals stand left of the line, and the head must not hide the track.
+const HEAD_OFF_PX: f64 = 8.0;
+const HEAD_R_PX: f64 = 4.5;
 
 /// The yard drawn as a control panel: `u` along the station's long axis,
 /// `v` across it. Distances along the tracks are true; the spacing between
@@ -184,66 +189,44 @@ fn densify(poly: &[(f64, f64)], step: f64) -> Vec<(f64, f64)> {
     out
 }
 
-/// A run of edges joined end to end into one oriented polyline in world
-/// metres, with the distance along it at each vertex.
-struct Line {
-    pts: Vec<(f64, f64)>,
-    at: Vec<f64>,
+/// The point `m` metres along `poly` from its first vertex, and the unit
+/// direction there, with the edge's stated length `len` mapped onto the
+/// polyline's own length (the two differ by rounding in the yard file).
+fn at_metres(poly: &[(f64, f64)], len: f64, m: f64) -> ((f64, f64), (f64, f64)) {
+    let total: f64 = poly.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum();
+    let mut left = (m / len.max(1e-9) * total).clamp(0.0, total);
+    for w in poly.windows(2) {
+        let seg = (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+        if seg <= 0.0 {
+            continue;
+        }
+        let dir = ((w[1].0 - w[0].0) / seg, (w[1].1 - w[0].1) / seg);
+        if left <= seg {
+            return ((w[0].0 + dir.0 * left, w[0].1 + dir.1 * left), dir);
+        }
+        left -= seg;
+    }
+    let n = poly.len();
+    let (a, b) = (poly[n.saturating_sub(2)], poly[n - 1]);
+    let seg = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
+    (b, ((b.0 - a.0) / seg, (b.1 - a.1) / seg))
 }
 
-impl Line {
-    fn along(yard: &Yard, path: &[usize]) -> Result<Line, String> {
-        let edge = |i: usize| yard.edges.get(i).ok_or_else(|| format!("skeleton path: no edge {i}"));
-        let first = edge(path[0])?;
-        // The first edge runs away from the node it shares with the second.
-        let mut at_node = match path.get(1).map(|&i| edge(i)).transpose()? {
-            Some(next) if first.b == next.a || first.b == next.b => first.a,
-            Some(next) if first.a == next.a || first.a == next.b => first.b,
-            Some(_) => return Err(format!("skeleton path: edges {} and {} do not meet", path[0], path[1])),
-            None => first.a,
-        };
-        let mut pts: Vec<(f64, f64)> = Vec::new();
-        for &i in path {
-            let e = edge(i)?;
-            let mut poly = e.poly.clone();
-            if e.a == at_node {
-                at_node = e.b;
-            } else if e.b == at_node {
-                at_node = e.a;
-                poly.reverse();
-            } else {
-                return Err(format!("skeleton path: edge {i} does not start where the last one ended"));
-            }
-            let skip = usize::from(!pts.is_empty());
-            pts.extend(poly.into_iter().skip(skip));
+/// The part of `poly` from `lo` to `hi` metres along it, `len` as above.
+fn piece(poly: &[(f64, f64)], len: f64, lo: f64, hi: f64) -> Vec<(f64, f64)> {
+    let total: f64 = poly.windows(2).map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1)).sum();
+    let k = total / len.max(1e-9);
+    let (lo, hi) = (lo * k, hi * k);
+    let mut out = vec![at_metres(poly, total, lo).0];
+    let mut at = 0.0;
+    for w in poly.windows(2) {
+        at += (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+        if at > lo && at < hi {
+            out.push(w[1]);
         }
-        let mut at = vec![0.0];
-        for w in pts.windows(2) {
-            at.push(at[at.len() - 1] + (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1));
-        }
-        Ok(Line { pts, at })
     }
-
-    fn len(&self) -> f64 {
-        self.at[self.at.len() - 1]
-    }
-
-    fn point(&self, s: f64) -> (f64, f64) {
-        let s = s.clamp(0.0, self.len());
-        let k = self.at.partition_point(|&a| a < s).clamp(1, self.pts.len() - 1);
-        let (a, b) = (self.pts[k - 1], self.pts[k]);
-        let span = self.at[k] - self.at[k - 1];
-        let t = if span > 0.0 { (s - self.at[k - 1]) / span } else { 0.0 };
-        (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
-    }
-
-    /// The stretch of line from `s0` to `s1`, with its inner vertices.
-    fn piece(&self, s0: f64, s1: f64) -> Vec<(f64, f64)> {
-        let mut out = vec![self.point(s0)];
-        out.extend(self.pts.iter().zip(&self.at).filter(|&(_, &a)| a > s0 && a < s1).map(|(p, _)| *p));
-        out.push(self.point(s1));
-        out
-    }
+    out.push(at_metres(poly, total, hi).0);
+    out
 }
 
 struct Camera {
@@ -300,34 +283,79 @@ fn install_panic_hook() {
 
 #[wasm_bindgen]
 pub struct App {
-    yard: Yard,
+    world: World,
+    seed: u32,
     panel: Panel,
     /// Each edge's shape in panel metres, mapped once at load.
     shapes: Vec<Vec<(f64, f64)>>,
-    /// Panel bounds of everything drawn, and of the running lines alone.
+    /// Panel bounds of everything drawn, and of the platform tracks.
     all: (f64, f64, f64, f64),
-    running: (f64, f64, f64, f64),
+    platforms: (f64, f64, f64, f64),
+    /// Per signal: its panel position and the unit direction it faces.
+    sig_at: Vec<((f64, f64), (f64, f64))>,
+    /// Per signal, the routes it is the entry of.
+    from: Vec<Vec<RouteId>>,
     canvas: HtmlCanvasElement,
     ctx: CanvasRenderingContext2d,
     cam: Camera,
     w: f64,
     h: f64,
     dpr: f64,
-    line: Line,
-    /// Head of the skeleton train, metres along `line`.
-    head: f64,
-    real_s: f64,
+    /// Ticks owed to the sim: real time times TIME_SCALE, carried between
+    /// frames so no fraction of a tick is lost.
+    owed: f64,
+    paused: bool,
+    /// The entry signal clicked first, and the route under the pointer.
+    sel: Option<SignalId>,
+    preview: Option<RouteId>,
+    /// The line under the panel, whether it is a refusal, and a counter the
+    /// page compares to know when to redraw it.
+    status: String,
+    refused: bool,
+    status_seq: u32,
 }
 
 fn bounds<'a>(pts: impl Iterator<Item = &'a (f64, f64)>) -> (f64, f64, f64, f64) {
     pts.fold((f64::MAX, f64::MIN, f64::MAX, f64::MIN), |(a, b, c, d), p| (a.min(p.0), b.max(p.0), c.min(p.1), d.max(p.1)))
 }
 
+fn mmss(s: u64) -> String {
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// The sim's constants, read from their own source so the "what is real"
+/// panel can never disagree with the build: `name\tvalue\ttag\treason`.
+/// The tag is the first word of the doc comment, which `consts_tagged.rs`
+/// demands is `solid` or `assumed`.
+fn constant_rows() -> Vec<String> {
+    let src = include_str!("../../sim/src/consts.rs");
+    let mut rows = Vec::new();
+    let mut doc: Vec<&str> = Vec::new();
+    for l in src.lines().map(str::trim) {
+        if let Some(d) = l.strip_prefix("///") {
+            doc.push(d.trim());
+        } else if let Some(rest) = l.strip_prefix("pub const ") {
+            let (name, value) = rest.split_once(':').zip(rest.split_once('=')).map_or(("?", "?"), |((n, _), (_, v))| (n, v));
+            let text = doc.join(" ");
+            let (tag, why) = text.split_once(':').unwrap_or(("untagged", &text));
+            rows.push(format!("{name}\t{}\t{tag}\t{}", value.trim().trim_end_matches(';'), why.trim()));
+            doc.clear();
+        } else {
+            doc.clear();
+        }
+    }
+    rows
+}
+
 #[wasm_bindgen]
 impl App {
     #[wasm_bindgen(constructor)]
-    pub fn new(canvas_id: &str) -> Result<App, JsValue> {
+    /// `mode` is `practice`, `light`, `normal` or `peak`; the page checks
+    /// `?mode=` and says so before it gets here.
+    pub fn new(canvas_id: &str, seed: u32, mode: &str) -> Result<App, JsValue> {
         install_panic_hook();
+        let mode = Mode::parse(mode).ok_or_else(|| JsValue::from_str(&format!("no mode '{mode}'")))?;
+        let profile = Profile::parse(NDLS_TRAFFIC).map_err(|e| JsValue::from_str(&format!("data/ndls.traffic: {e}")))?;
         let doc = web_sys::window()
             .and_then(|w| w.document())
             .ok_or_else(|| JsValue::from_str("no document"))?;
@@ -341,18 +369,57 @@ impl App {
             .ok_or_else(|| JsValue::from_str("2d context unavailable"))?
             .dyn_into()?;
         let yard = Yard::parse(cabin_sim::NDLS).map_err(|e| JsValue::from_str(&format!("data/ndls.yard: {}", e.0)))?;
-        let line = Line::along(&yard, &SKELETON_PATH).map_err(|e| JsValue::from_str(&e))?;
         let panel = Panel::new(&yard);
         let shapes: Vec<Vec<(f64, f64)>> = yard.edges.iter().map(|e| panel.map_poly(&e.poly)).collect();
         let all = bounds(shapes.iter().flatten());
-        let running = bounds(yard.edges.iter().zip(&shapes).filter(|(e, _)| e.kind == Kind::Running).flat_map(|(_, s)| s));
+        let platforms = bounds(yard.platforms.iter().flat_map(|p| &shapes[p.edge]));
+        let sig_at = yard
+            .signals
+            .iter()
+            .map(|s| {
+                let e = &yard.edges[s.edge];
+                let (p, d) = at_metres(&e.poly, e.len, s.offset);
+                let d = if s.forward { d } else { (-d.0, -d.1) };
+                let (a, b) = (panel.map(p.0, p.1), panel.map(p.0 + d.0, p.1 + d.1));
+                let n = (b.0 - a.0).hypot(b.1 - a.1).max(1e-9);
+                (a, ((b.0 - a.0) / n, (b.1 - a.1) / n))
+            })
+            .collect();
+        let world = World::shift(yard, profile, mode, u64::from(seed));
+        let mut from = vec![Vec::new(); world.yard.signals.len()];
+        for r in world.lock.routes() {
+            from[r.entry].push(r.id);
+        }
         let cam = Camera { cx: 0.0, cy: 0.0, vx: 0.0, vy: 0.0, z: 0.0, zt: 0.0, vz: 0.0, pivot: None, raw: None, fitted: false };
-        Ok(App { yard, panel, shapes, all, running, canvas, ctx, cam, w: 1.0, h: 1.0, dpr: 1.0, line, head: 0.0, real_s: 0.0 })
+        Ok(App {
+            world,
+            seed,
+            panel,
+            shapes,
+            all,
+            platforms,
+            sig_at,
+            from,
+            canvas,
+            ctx,
+            cam,
+            w: 1.0,
+            h: 1.0,
+            dpr: 1.0,
+            owed: 0.0,
+            paused: false,
+            sel: None,
+            preview: None,
+            status: String::new(),
+            refused: false,
+            status_seq: 0,
+        })
     }
 
-    /// One animation frame: move the skeleton train by `real_ms`, run the
-    /// camera springs, draw. Colours come from the page's CSS custom
+    /// One animation frame: step the sim by `real_ms` at TIME_SCALE, run
+    /// the camera springs, draw. Colours come from the page's CSS custom
     /// properties, so both themes are drawn by the same code.
+    #[allow(clippy::too_many_arguments)]
     pub fn frame(&mut self, real_ms: f64, dpr: f64, reduce: bool, bg: &str, fg: &str, dim: &str, line: &str) {
         self.dpr = dpr;
         self.w = f64::from(self.canvas.width()) / dpr;
@@ -362,25 +429,98 @@ impl App {
         }
         // A hidden tab sends one long frame; a tenth of a second at most.
         let dt = (real_ms / 1000.0).clamp(0.0, 0.1);
-        self.real_s += dt;
-        self.head = (self.head + SKELETON_SPEED_MS * dt) % (self.line.len() + SKELETON_LEN_M);
+        if !self.paused {
+            self.owed += dt * TIME_SCALE * f64::from(TICK_HZ);
+            let n = self.owed.floor();
+            self.owed -= n;
+            self.world.step_ticks(n as u32);
+        }
         self.spring(dt, reduce);
         self.draw(bg, fg, dim, line);
     }
 
     pub fn osm_base(&self) -> String {
-        self.yard.osm_base.clone()
+        self.world.yard.osm_base.clone()
     }
 
-    pub fn real_s(&self) -> f64 {
-        self.real_s
+    /// The "what is real" panel, one row per layer: `layer\ttag\tclaim`.
+    /// Counts and dates come from the baked files, so they cannot go stale.
+    pub fn real(&self) -> Vec<String> {
+        let y = &self.world.yard;
+        let homes = y.signals.iter().filter(|s| s.kind == SignalKind::Home).count();
+        let (p, written) = self.world.profile.as_ref().map_or((0, "unknown"), |p| (p.hourly.iter().sum::<u32>(), p.written.as_str()));
+        let pool = self.world.profile.as_ref().map_or(0, |p| p.pool.len());
+        [
+            ("Rules", "primary", "Each check the interlocking makes cites a General Rules row of rails/research.md (C3-133 to C3-164). cargo test fails if a cited row no longer says what the game says it does.".to_string()),
+            ("Speeds", "assumed", "50 km/h, and 15 km/h over points set reverse, are Southern Railway's figures (C3-52, C3-49). NDLS is on Northern Railway, whose Subsidiary Rules were not read.".to_string()),
+            ("Track", "OpenStreetMap", format!("Extract of {}: {} track sections, {} points, {} crossings, {} platforms, {} portals. Not checked against a track diagram: none was found.", y.osm_base.get(..10).unwrap_or(&y.osm_base), y.edges.len(), y.points.len(), y.crossings.len(), y.platforms.len(), y.portals.len())),
+            ("Promoted track", "assumed", format!("{} yard or siding ways are worked as running lines, promoted by rule so that trains can reach the platforms.", y.promoted.len())),
+            ("Slips", "assumed", "A switch-tagged node where two tracks cross is read as a double slip. OpenStreetMap does not say single or double.".to_string()),
+            ("Platform numbers", "assumed", "Assigned by side, ascending west to east.".to_string()),
+            ("Signals", "authored", format!("{} signals ({homes} Home, {} Starter), all placed by rule (C3-58, C3-63). None comes from OpenStreetMap or a diagram.", y.signals.len(), y.signals.len() - homes)),
+            ("Routes", "authored", format!("{} routes: the shortest path for each pair of signals. Arrivals into a platform with no way out are removed.", self.world.lock.routes().len())),
+            ("Aspects", "assumed", "Red with no route, yellow when the exit signal is red, green otherwise. The ledger does not settle a Starter's off aspect.".to_string()),
+            ("Traffic", "secondary", format!("About {p} trains on a busy day, from a 2016 survey of the station's berthing chart (AG18) and the datameet 2016 timetable, read {written}. No figure is from Indian Railways. The {pool} train numbers and names are real; their times are drawn from the seed.")),
+            ("Score and shift", "assumed", "Three plain numbers, never blended. The shift length, its start and the mode fractions were chosen by you on 2026-11-18; see the constants below.".to_string()),
+            ("Panel", "schematic", format!("Not to scale across the tracks: spacing x{PANEL_STRETCH}.")),
+        ]
+        .into_iter()
+        .map(|(a, b, c)| format!("{a}\t{b}\t{c}"))
+        .collect()
+    }
+
+    /// Every constant of the sim with its value and tag; see `constant_rows`.
+    pub fn constants(&self) -> Vec<String> {
+        constant_rows()
+    }
+
+    pub fn seed(&self) -> u32 {
+        self.seed
     }
 
     pub fn stretch(&self) -> f64 {
         PANEL_STRETCH
     }
 
-    // ---- Input -------------------------------------------------------------
+    pub fn time_scale(&self) -> f64 {
+        TIME_SCALE
+    }
+
+    /// Game seconds since the shift began.
+    pub fn game_s(&self) -> f64 {
+        self.world.tick as f64 / f64::from(TICK_HZ)
+    }
+
+    /// The game clock, seconds after midnight.
+    pub fn clock_s(&self) -> f64 {
+        self.world.clock_s() as f64
+    }
+
+    pub fn mode(&self) -> String {
+        self.world.mode.map_or("", Mode::name).to_string()
+    }
+
+    /// The shift's start and end on the game clock, seconds after midnight.
+    pub fn shift_window(&self) -> Vec<f64> {
+        vec![f64::from(SHIFT_START_S), f64::from(SHIFT_START_S + SHIFT_LEN_S)]
+    }
+
+    /// The three numbers and whether the shift is over: `[handled, delay
+    /// in game minutes, put-backs, over 0 or 1]`. Practice keeps them at 0.
+    pub fn score(&self) -> Vec<f64> {
+        let s = &self.world.score;
+        vec![f64::from(s.handled), s.delay_min(), f64::from(s.put_backs), f64::from(u8::from(s.over.is_some()))]
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    pub fn set_paused(&mut self, on: bool) {
+        self.paused = on;
+    }
+
+    // ---- Camera input ------------------------------------------------------
 
     /// Drag: the map follows the pointer 1:1 inside the yard and on a rubber
     /// band past its edges, CSS px.
@@ -414,7 +554,204 @@ impl App {
         self.cam.pivot = Some((x, y, wx, wy));
     }
 
-    // ---- Test hooks (read-only) ----------------------------------------------
+    // ---- Controls ----------------------------------------------------------
+
+    /// A click on the panel at (x, y) CSS px. With an entry chosen, an exit
+    /// of it sets the route; otherwise a signal that sets routes becomes
+    /// the entry; a click on nothing clears the choice.
+    pub fn click(&mut self, x: f64, y: f64) {
+        if let Some(r) = self.exit_at(x, y) {
+            self.set_route(r);
+            return;
+        }
+        match self.entry_at(x, y) {
+            Some(s) if self.sel == Some(s) => self.clear(),
+            Some(s) => self.choose(s),
+            None => self.clear(),
+        }
+    }
+
+    /// The pointer moved to (x, y): preview the route to the exit under it.
+    /// True when a target is under it, for the cursor.
+    pub fn hover(&mut self, x: f64, y: f64) -> bool {
+        self.preview = self.exit_at(x, y);
+        self.preview.is_some() || self.entry_at(x, y).is_some()
+    }
+
+    /// Preview a route from the page's exit buttons; a negative id clears.
+    pub fn preview_route(&mut self, id: i32) {
+        self.preview = usize::try_from(id).ok().filter(|&r| Some(self.world.lock.routes().get(r).map(|r| r.entry)) == Some(self.sel));
+    }
+
+    /// Choose an entry by name, from the rack or the command menu.
+    pub fn select(&mut self, name: &str) -> bool {
+        match self.world.yard.signals.iter().position(|s| s.name == name) {
+            Some(s) if !self.from[s].is_empty() => {
+                self.choose(s);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Esc: drop the chosen entry. False when nothing was chosen.
+    pub fn escape(&mut self) -> bool {
+        let had = self.sel.is_some();
+        self.clear();
+        had
+    }
+
+    pub fn set_route(&mut self, id: usize) {
+        let Some(r) = self.world.lock.routes().get(id) else { return };
+        let a = Action::SetRoute { entry: r.entry, exit: r.exit };
+        match self.world.apply(a) {
+            Ok(()) => {
+                let msg = format!("{} set.", self.world.route_name(id));
+                self.sel = None;
+                self.preview = None;
+                self.say(msg, false);
+            }
+            Err(e) => {
+                let msg = self.world.describe(a, e);
+                self.say(msg, true);
+            }
+        }
+    }
+
+    pub fn cancel_route(&mut self, id: usize) {
+        if id >= self.world.lock.routes().len() {
+            return;
+        }
+        let a = Action::CancelRoute(id);
+        match self.world.apply(a) {
+            Ok(()) => {
+                let name = self.world.route_name(id);
+                // A train on the approach keeps the locks for a while.
+                let msg = if self.world.lock.live().contains(&id) {
+                    format!("{name} put back; approach locked, a train may still run through.")
+                } else {
+                    format!("{name} cancelled.")
+                };
+                self.sel = None;
+                self.say(msg, false);
+            }
+            Err(e) => {
+                let msg = self.world.describe(a, e);
+                self.say(msg, true);
+            }
+        }
+    }
+
+    /// Cancel the route set from the chosen entry, if there is one.
+    pub fn cancel_selected(&mut self) -> bool {
+        match self.sel.and_then(|s| self.set_from(s)) {
+            Some(r) => {
+                self.cancel_route(r);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn accept(&mut self, portal: usize) {
+        if portal >= self.world.yard.portals.len() {
+            return;
+        }
+        let a = Action::Accept(portal);
+        match self.world.apply(a) {
+            Ok(()) => {
+                // Ids only grow, so the train just accepted is the last.
+                let t = *self.world.trains.keys().next_back().expect("an accepted train");
+                let home = self.world.trains[&t].next_signal.map_or(String::new(), |s| self.world.yard.signals[s].name.clone());
+                let msg = format!("{} accepted at {}; it runs to {home}.", self.world.train_name(t), self.world.yard.portals[portal].name);
+                self.say(msg, false);
+            }
+            Err(e) => {
+                let msg = self.world.describe(a, e);
+                self.say(msg, true);
+            }
+        }
+    }
+
+    pub fn status(&self) -> String {
+        self.status.clone()
+    }
+
+    pub fn status_refused(&self) -> bool {
+        self.refused
+    }
+
+    pub fn status_seq(&self) -> u32 {
+        self.status_seq
+    }
+
+    /// The chosen entry's name, or "".
+    pub fn selected(&self) -> String {
+        self.sel.map_or(String::new(), |s| self.world.yard.signals[s].name.clone())
+    }
+
+    /// The chosen entry's routes, one row each: `id \t exit \t set`, where
+    /// `set` is 1 for the route set now. The page lays them out as buttons.
+    pub fn exits(&self) -> Vec<String> {
+        let Some(s) = self.sel else { return Vec::new() };
+        let set = self.set_from(s);
+        self.from[s]
+            .iter()
+            .map(|&r| format!("{r}\t{}\t{}", self.world.exit_name(self.world.lock.routes()[r].exit), u8::from(set == Some(r))))
+            .collect()
+    }
+
+    /// The rack, one row per line: `bay \t key \t name \t text \t action \t
+    /// arg \t title`. Bays are `due`, `platform`, `depart`. Actions: `accept`
+    /// (arg: portal id), `route` (arg: signal name), or empty. `title` is
+    /// the train's full name, or "".
+    pub fn rack(&self) -> Vec<String> {
+        let w = &self.world;
+        let y = &w.yard;
+        let hz = u64::from(TICK_HZ);
+        let mut rows = Vec::new();
+        for (&p, q) in &w.offers {
+            if let Some(o) = q.front() {
+                let behind = if q.len() > 1 { format!(", {} more behind", q.len() - 1) } else { String::new() };
+                let (number, title) = w.offer_name(o);
+                let number = if number.is_empty() { "Offer".to_string() } else { number };
+                rows.push(format!("due\to{p}\t{number}\toffered at {}, waiting {}{behind}\taccept\t{p}\t{title}", y.portals[p].name, mmss((w.tick - o.since) / hz)));
+            }
+        }
+        for (&id, t) in &w.trains {
+            let name = w.train_name(id);
+            let sig = |s: SignalId| y.signals[s].name.clone();
+            let plat = |s: SignalId| y.signals[s].platform.map_or(String::new(), |k| format!("P{} ", y.platforms[k].name));
+            let row = match (t.leaving, t.next_signal) {
+                (Some(p), _) => format!("depart\tt{id}\t{name}\tleaving by {}\t\t", y.portals[p].name),
+                (None, Some(s)) if y.signals[s].kind == SignalKind::Home => {
+                    // Set but not yet taken: the train moves on the next tick.
+                    let need = if w.lock.takeable(s).is_some() { "route set" } else { "needs a route" };
+                    format!("due\tt{id}\t{name}\tat {}, {need}\troute\t{}", sig(s), sig(s))
+                }
+                (None, Some(s)) => match t.dwell_until {
+                    None => format!("due\tt{id}\t{name}\trunning in to {}({})\t\t", plat(s), sig(s)),
+                    Some(u) if w.tick < u => format!("platform\tt{id}\t{name}\t{}dwell, {} left\troute\t{}", plat(s), mmss((u - w.tick).div_ceil(hz)), sig(s)),
+                    Some(u) => format!("depart\tt{id}\t{name}\t{}ready {} ago, needs a route\troute\t{}", plat(s), mmss((w.tick - u) / hz), sig(s)),
+                },
+                (None, None) => continue,
+            };
+            rows.push(format!("{row}\t{}", w.train_title(id)));
+        }
+        rows
+    }
+
+    /// Commands for the menu: `kind \t id \t title`. Kinds: `route`,
+    /// `cancel`, `accept`. Typing two names, such as `hn3 p5`, finds a route.
+    pub fn commands(&self) -> Vec<String> {
+        let w = &self.world;
+        let mut out: Vec<String> = w.offers.iter().filter(|(_, q)| !q.is_empty()).map(|(&p, q)| format!("accept\t{p}\tAccept {} offered at {}", w.offer_name(&q[0]).0, w.yard.portals[p].name)).collect();
+        out.extend(w.lock.live().into_iter().map(|r| format!("cancel\t{r}\tCancel {}", w.route_name(r))));
+        out.extend((0..w.lock.routes().len()).map(|r| format!("route\t{r}\tSet {}", w.route_name(r))));
+        out
+    }
+
+    // ---- Test hooks: read-only, except `skip` ------------------------------
 
     pub fn zoom(&self) -> f64 {
         self.cam.scale()
@@ -431,36 +768,107 @@ impl App {
         vec![a, b, c, d]
     }
 
-    /// [x, y] in CSS px of the skeleton train's head.
-    pub fn train_screen(&self) -> Vec<f64> {
-        let (x, y) = self.line.point(self.head);
-        let (u, v) = self.panel.map(x, y);
-        let (sx, sy) = self.to_screen(u, v);
-        vec![sx, sy]
-    }
-
-    pub fn train_head_m(&self) -> f64 {
-        self.head
-    }
-
     /// [x, y] in CSS px of platform `i`'s midpoint.
     pub fn platform_screen(&self, i: usize) -> Vec<f64> {
-        let Some(p) = self.yard.platforms.get(i) else { return vec![] };
+        let Some(p) = self.world.yard.platforms.get(i) else { return vec![] };
         let s = &self.shapes[p.edge];
         let (sx, sy) = self.to_screen(s[s.len() / 2].0, s[s.len() / 2].1);
         vec![sx, sy]
     }
 
     pub fn platform_count(&self) -> usize {
-        self.yard.platforms.len()
+        self.world.yard.platforms.len()
     }
 
     pub fn edge_count(&self) -> usize {
-        self.yard.edges.len()
+        self.world.yard.edges.len()
+    }
+
+    pub fn signal_names(&self) -> Vec<String> {
+        self.world.yard.signals.iter().map(|s| s.name.clone()).collect()
+    }
+
+    /// [x0, y0, x1, y1, ...] in CSS px: each signal head, in signal order.
+    pub fn signal_screens(&self) -> Vec<f64> {
+        (0..self.world.yard.signals.len()).flat_map(|s| {
+            let (x, y) = self.head_screen(s);
+            [x, y]
+        }).collect()
+    }
+
+    /// [x, y] in CSS px of portal `name`'s end of track, or [] if none.
+    pub fn portal_screen(&self, name: &str) -> Vec<f64> {
+        let Some(p) = self.world.yard.portals.iter().position(|p| p.name == name) else { return vec![] };
+        let (x, y) = self.portal_xy(p);
+        vec![x, y]
+    }
+
+    pub fn portal_names(&self) -> Vec<String> {
+        self.world.yard.portals.iter().map(|p| p.name.clone()).collect()
+    }
+
+    pub fn aspect_of(&self, name: &str) -> String {
+        self.world.yard.signals.iter().position(|s| s.name == name).map_or(String::new(), |s| format!("{:?}", self.world.aspect(s)))
+    }
+
+    /// The route drawn as the preview, or -1.
+    pub fn previewing(&self) -> i32 {
+        self.preview.map_or(-1, |r| r as i32)
+    }
+
+    pub fn train_count(&self) -> usize {
+        self.world.trains.len()
+    }
+
+    /// Routes that hold a lock now, by name.
+    pub fn live_routes(&self) -> Vec<String> {
+        self.world.lock.live().into_iter().map(|r| self.world.route_name(r)).collect()
+    }
+
+    /// The id of the route from `entry` to the exit named `exit` (`P5
+    /// (ST5S)` or `N2`), or -1.
+    pub fn route_id(&self, entry: &str, exit: &str) -> i32 {
+        let w = &self.world;
+        w.lock.routes().iter().find(|r| w.yard.signals[r.entry].name == entry && w.exit_name(r.exit) == exit).map_or(-1, |r| r.id as i32)
+    }
+
+    /// Test hook: run `game_s` of game time at once, as the frame loop
+    /// would over many frames. It steps the same sim; it changes no rule.
+    pub fn skip(&mut self, game_s: f64) {
+        self.world.step_ticks((game_s * f64::from(TICK_HZ)).round() as u32);
     }
 }
 
 impl App {
+    fn say(&mut self, msg: String, refused: bool) {
+        self.status = msg;
+        self.refused = refused;
+        self.status_seq += 1;
+    }
+
+    fn clear(&mut self) {
+        self.sel = None;
+        self.preview = None;
+        self.say(String::new(), false);
+    }
+
+    fn choose(&mut self, s: SignalId) {
+        self.sel = Some(s);
+        self.preview = None;
+        let name = self.world.yard.signals[s].name.clone();
+        let msg = match self.set_from(s) {
+            Some(r) => format!("{} is set. Delete cancels it; Esc clears.", self.world.route_name(r)),
+            None => format!("{name}: click an exit, or Esc to clear."),
+        };
+        self.say(msg, false);
+    }
+
+    /// The route set from signal `s` that no train has passed the entry of.
+    fn set_from(&self, s: SignalId) -> Option<RouteId> {
+        let w = &self.world;
+        w.lock.live().into_iter().find(|&r| w.lock.routes()[r].entry == s && !w.trains.values().any(|t| t.route == Some(r) && t.to_signal(&w.yard, s).is_none()))
+    }
+
     fn to_screen(&self, u: f64, v: f64) -> (f64, f64) {
         let s = self.cam.scale();
         // Panel v grows up the screen; canvas y grows down.
@@ -472,9 +880,61 @@ impl App {
         (self.cam.cx + (sx - self.w / 2.0) / s, self.cam.cy - (sy - self.h / 2.0) / s)
     }
 
-    /// Frame the running lines, once, when the canvas size is first known.
+    /// A signal's head on screen: its point on the track, moved HEAD_OFF_PX
+    /// to the left of the direction it faces.
+    fn head_screen(&self, s: SignalId) -> (f64, f64) {
+        let ((u, v), (du, dv)) = self.sig_at[s];
+        let (x, y) = self.to_screen(u, v);
+        // Screen direction is (du, -dv); its left is (-dv, -du).
+        (x - dv * HEAD_OFF_PX, y - du * HEAD_OFF_PX)
+    }
+
+    fn portal_xy(&self, p: usize) -> (f64, f64) {
+        let n = &self.world.yard.nodes[self.world.yard.portals[p].node];
+        let (u, v) = self.panel.map(n.x, n.y);
+        self.to_screen(u, v)
+    }
+
+    fn exit_xy(&self, exit: Exit) -> (f64, f64) {
+        match exit {
+            Exit::Berth { starter, .. } => self.head_screen(starter),
+            Exit::Portal(p) => self.portal_xy(p),
+        }
+    }
+
+    /// The chosen entry's route whose exit is nearest (x, y), within HIT_PX.
+    fn exit_at(&self, x: f64, y: f64) -> Option<RouteId> {
+        let s = self.sel?;
+        let routes = self.world.lock.routes();
+        self.from[s]
+            .iter()
+            .map(|&r| {
+                let (ex, ey) = self.exit_xy(routes[r].exit);
+                (r, (ex - x).hypot(ey - y))
+            })
+            .filter(|&(_, d)| d <= HIT_PX)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(r, _)| r)
+    }
+
+    /// The signal that sets routes nearest (x, y), within HIT_PX.
+    fn entry_at(&self, x: f64, y: f64) -> Option<SignalId> {
+        (0..self.sig_at.len())
+            .filter(|&s| !self.from[s].is_empty())
+            .map(|s| {
+                let (hx, hy) = self.head_screen(s);
+                (s, (hx - x).hypot(hy - y))
+            })
+            .filter(|&(_, d)| d <= HIT_PX)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(s, _)| s)
+    }
+
+    /// The default view frames the platform tracks, once, when the canvas
+    /// size is first known: you chose a closer view over a larger stretch
+    /// on 2026-11-17, and pan to see the throats.
     fn fit(&mut self) {
-        let (u0, u1, v0, v1) = self.running;
+        let (u0, u1, v0, v1) = self.platforms;
         self.cam.cx = (u0 + u1) / 2.0;
         self.cam.cy = (v0 + v1) / 2.0;
         let s = ((self.w / (u1 - u0)).min(self.h / (v1 - v0)) * FIT_SHARE).clamp(ZOOM_MIN, ZOOM_MAX);
@@ -553,11 +1013,39 @@ impl App {
         ctx.stroke();
     }
 
+    fn ring(&self, x: f64, y: f64, r: f64) {
+        self.ctx.begin_path();
+        let _ = self.ctx.arc(x, y, r, 0.0, std::f64::consts::TAU);
+        self.ctx.stroke();
+    }
+
     /// Rule A7: red, yellow and green are signal aspects and appear nowhere
-    /// else, so this palette is ink only. Running track is dim, yard and
-    /// siding track dimmer; B6 draws a set route bright.
+    /// else; this is the only function that names them. Each head also has
+    /// an ink outline, so yellow on the light theme still reads as a shape.
+    fn draw_heads(&self, fg: &str) {
+        let ctx = &self.ctx;
+        ctx.set_line_width(1.0);
+        ctx.set_stroke_style_str(fg);
+        for s in 0..self.sig_at.len() {
+            let (x, y) = self.head_screen(s);
+            ctx.set_fill_style_str(match self.world.aspect(s) {
+                Aspect::Red => "#e5484d",
+                Aspect::Yellow | Aspect::DoubleYellow => "#f5d90a",
+                Aspect::Green => "#30a46c",
+            });
+            ctx.begin_path();
+            let _ = ctx.arc(x, y, HEAD_R_PX, 0.0, std::f64::consts::TAU);
+            ctx.fill();
+            ctx.stroke();
+        }
+    }
+
+    /// Ink only, except the heads. Running track dim, yard and siding track
+    /// dimmer, a set route bright, the route under the pointer dashed.
     fn draw(&self, bg: &str, fg: &str, dim: &str, line: &str) {
         let ctx = &self.ctx;
+        let w = &self.world;
+        let y = &w.yard;
         let _ = ctx.set_transform(self.dpr, 0.0, 0.0, self.dpr, 0.0, 0.0);
         ctx.set_fill_style_str(bg);
         ctx.fill_rect(0.0, 0.0, self.w, self.h);
@@ -566,45 +1054,98 @@ impl App {
         for pass in [false, true] {
             ctx.set_stroke_style_str(if pass { dim } else { line });
             ctx.set_line_width(if pass { 2.0 } else { 1.0 });
-            for (e, s) in self.yard.edges.iter().zip(&self.shapes) {
+            for (e, s) in y.edges.iter().zip(&self.shapes) {
                 if (e.kind == Kind::Running) == pass {
                     self.stroke(s);
                 }
             }
         }
+        ctx.set_stroke_style_str(fg);
+        ctx.set_line_width(3.0);
+        for (k, s) in self.shapes.iter().enumerate() {
+            if w.lock.held(Res::Edge(k)) {
+                self.stroke(s);
+            }
+        }
+        if let Some(r) = self.preview {
+            let route = &w.lock.routes()[r];
+            let _ = ctx.set_line_dash(&js_sys::Array::of2(&JsValue::from(6.0), &JsValue::from(5.0)));
+            ctx.set_line_width(3.0);
+            for &e in route.path.iter().chain(&route.overlap) {
+                self.stroke(&self.shapes[e]);
+            }
+            let _ = ctx.set_line_dash(&js_sys::Array::new());
+        }
+
+        // Trains: a solid block with its name, ink only.
+        ctx.set_line_cap("butt");
+        ctx.set_line_width(7.0);
+        ctx.set_font("700 11px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
+        ctx.set_text_align("center");
+        ctx.set_text_baseline("middle");
+        ctx.set_fill_style_str(fg);
+        let occ = w.occupancy();
+        for (&id, b) in &occ.bodies {
+            let mut head = None;
+            for sp in &b.spans {
+                let e = &y.edges[sp.edge];
+                let body = self.panel.map_poly(&piece(&e.poly, e.len, sp.lo, sp.hi));
+                self.stroke(&body);
+                if sp.edge == b.head.0 {
+                    let near_b = (sp.hi - b.head.1).abs() < (sp.lo - b.head.1).abs();
+                    head = Some(if near_b { body[body.len() - 1] } else { body[0] });
+                }
+            }
+            if let Some((u, v)) = head {
+                let (x, yy) = self.to_screen(u, v);
+                let _ = ctx.fill_text(&w.train_name(id), x, yy - 14.0);
+            }
+        }
+
+        // Choice: the entry ringed solid, its exits ringed dashed, the one
+        // under the pointer ringed solid.
+        if let Some(s) = self.sel {
+            ctx.set_stroke_style_str(fg);
+            ctx.set_line_width(2.0);
+            let (x, yy) = self.head_screen(s);
+            self.ring(x, yy, HIT_PX / 2.0);
+            let _ = ctx.set_line_dash(&js_sys::Array::of2(&JsValue::from(3.0), &JsValue::from(3.0)));
+            for &r in &self.from[s] {
+                let (x, yy) = self.exit_xy(w.lock.routes()[r].exit);
+                if self.preview != Some(r) {
+                    self.ring(x, yy, HIT_PX / 2.0);
+                }
+            }
+            let _ = ctx.set_line_dash(&js_sys::Array::new());
+            if let Some(r) = self.preview {
+                let (x, yy) = self.exit_xy(w.lock.routes()[r].exit);
+                self.ring(x, yy, HIT_PX / 2.0);
+            }
+        }
+        self.draw_heads(fg);
 
         ctx.set_font("11px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
-        ctx.set_text_baseline("middle");
-        ctx.set_text_align("center");
         ctx.set_fill_style_str(dim);
-        for p in &self.yard.platforms {
+        for p in &y.platforms {
             let s = &self.shapes[p.edge];
-            let (x, y) = self.to_screen(s[s.len() / 2].0, s[s.len() / 2].1);
-            let _ = ctx.fill_text(&format!("P{}", p.name), x, y - 9.0);
+            let (x, yy) = self.to_screen(s[s.len() / 2].0, s[s.len() / 2].1);
+            let _ = ctx.fill_text(&format!("P{}", p.name), x, yy - 9.0);
         }
-        for p in &self.yard.portals {
-            let n = &self.yard.nodes[p.node];
-            let (u, v) = self.panel.map(n.x, n.y);
-            let (x, y) = self.to_screen(u, v);
+        for (k, p) in y.portals.iter().enumerate() {
+            let (x, yy) = self.portal_xy(k);
+            let n = &y.nodes[p.node];
             // North portals sit at the left end, south at the right; the
             // label goes outside the yard.
-            let dx = if u < (self.all.0 + self.all.1) / 2.0 { -16.0 } else { 16.0 };
-            let _ = ctx.fill_text(&p.name, x + dx, y);
+            let u = self.panel.map(n.x, n.y).0;
+            let dx = if u < (self.all.0 + self.all.1) / 2.0 { -18.0 } else { 18.0 };
+            let _ = ctx.fill_text(&p.name, x + dx, yy);
         }
-
-        // The skeleton train: a solid block with its number, ink only.
-        let tail = (self.head - SKELETON_LEN_M).max(0.0);
-        let head = self.head.min(self.line.len());
-        if head > tail {
-            let body: Vec<(f64, f64)> = densify(&self.line.piece(tail, head), DENSIFY_M).into_iter().map(|(x, y)| self.panel.map(x, y)).collect();
-            ctx.set_stroke_style_str(fg);
-            ctx.set_line_width(7.0);
-            ctx.set_line_cap("butt");
-            self.stroke(&body);
-            let (u, v) = body[body.len() - 1];
-            let (x, y) = self.to_screen(u, v);
-            ctx.set_fill_style_str(fg);
-            let _ = ctx.fill_text("TEST", x, y - 14.0);
+        // Signal names, beyond the head on the side away from the track.
+        ctx.set_font("10px ui-monospace, \"JetBrains Mono\", \"DejaVu Sans Mono\", monospace");
+        for (k, s) in y.signals.iter().enumerate() {
+            let ((_, _), (du, dv)) = self.sig_at[k];
+            let (x, yy) = self.head_screen(k);
+            let _ = ctx.fill_text(&s.name, x - dv * 18.0, yy - du * 18.0);
         }
     }
 }
@@ -617,16 +1158,17 @@ mod tests {
         Yard::parse(cabin_sim::NDLS).expect("baked yard parses")
     }
 
+    /// The panel lists every constant, with the value and tag the source has.
     #[test]
-    fn skeleton_path_chains_from_portal_n1_to_platform_1() {
-        let y = ndls();
-        let line = Line::along(&y, &SKELETON_PATH).expect("path chains");
-        let n1 = y.portals.iter().find(|p| p.name == "N1").expect("portal N1");
-        let start = &y.nodes[n1.node];
-        assert!((line.pts[0].0 - start.x).hypot(line.pts[0].1 - start.y) < 0.5, "starts at N1");
-        let p1 = y.platforms.iter().find(|p| p.name == "1").expect("platform 1");
-        assert_eq!(*SKELETON_PATH.last().unwrap(), p1.edge, "ends on platform 1's track");
-        assert!(SKELETON_PATH.iter().all(|&i| y.edges[i].kind == Kind::Running));
+    fn the_panel_lists_every_constant_with_its_tag() {
+        let rows = constant_rows();
+        let n = include_str!("../../sim/src/consts.rs").lines().filter(|l| l.trim_start().starts_with("pub const")).count();
+        assert_eq!(rows.len(), n);
+        let f = |name: &str| rows.iter().find(|r| r.starts_with(&format!("{name}\t"))).map(|r| r.split('\t').map(str::to_string).collect::<Vec<_>>()).unwrap();
+        assert_eq!(f("OVERLAP_M")[1..3], ["120.0", "solid"]);
+        assert_eq!(f("SHIFT_START_S")[1..3], ["6 * 3600 + 1800", "assumed"]);
+        assert!(f("TIME_SCALE")[3].starts_with("game seconds per real second"));
+        assert!(rows.iter().all(|r| r.split('\t').count() == 4 && ["solid", "assumed"].contains(&r.split('\t').nth(2).unwrap())));
     }
 
     #[test]

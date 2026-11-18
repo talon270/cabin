@@ -49,6 +49,8 @@ pub enum Refusal {
     NoLineClear { portal: PortalId, wait_s: u32 },
     TrainPastSignal { train: TrainId },
     ApproachLocked { release_in_s: u32 },
+    /// Accept at a portal with no train offered there.
+    NotOffered { portal: PortalId },
 }
 
 /// A route's track in running order, path then overlap, and the node and
@@ -325,6 +327,11 @@ impl Interlocking {
     /// Whether any live route still holds `r`.
     pub fn held(&self, r: Res) -> bool {
         self.locks.values().any(|l| l.held.contains(&r))
+    }
+
+    /// Every route that holds a lock, set or approach-locked, in id order.
+    pub fn live(&self) -> Vec<RouteId> {
+        self.locks.keys().copied().collect()
     }
 
     /// The route a train has taken and not yet passed the entry of.

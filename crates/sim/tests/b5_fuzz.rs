@@ -110,6 +110,7 @@ fn fuzz(seed: u64, n: u64) -> Counts {
                     }
                 }
                 Action::CancelRoute(_) => c.cancelled += 1,
+                Action::Accept(_) => {}
             },
             Err(e) => {
                 *c.refusals.entry(refusal_kind(&e)).or_insert(0) += 1;

@@ -135,20 +135,41 @@ fn holds_cover_path_overlap_and_points_and_the_overlap_is_long_enough() {
 }
 
 #[test]
+fn no_route_leads_into_a_berth_the_train_cannot_leave() {
+    let y = ndls();
+    let routes = build_routes(&y);
+    for r in &routes {
+        if let Exit::Berth { starter, .. } = r.exit {
+            assert!(routes.iter().any(|d| d.entry == starter), "route {} ends at {}, which sets no route", r.id, y.signals[starter].name);
+        }
+        assert_eq!(routes[r.id].id, r.id, "ids are indices");
+    }
+}
+
+#[test]
 fn routes_are_the_same_on_every_build() {
     let y = ndls();
     assert_eq!(build_routes(&y), build_routes(&y));
 }
 
 #[test]
-fn every_platform_and_every_home_has_a_route() {
+fn every_platform_but_15_and_16_and_every_home_has_a_route() {
     let y = ndls();
     let routes = build_routes(&y);
+    let mut unworked = Vec::new();
     for (k, p) in y.platforms.iter().enumerate() {
         let arrive = routes.iter().any(|r| matches!(r.exit, Exit::Berth { platform, .. } if platform == k));
         let leave = routes.iter().any(|r| y.signals[r.entry].platform == Some(k) && matches!(r.exit, Exit::Portal(_)));
-        assert!(arrive && leave, "platform {}: arrival {arrive}, departure {leave}", p.name);
+        assert!(leave, "platform {}: no departure", p.name);
+        if !arrive {
+            unworked.push(p.name.as_str());
+        }
     }
+    // Platforms 15 and 16's only arrivals came from the south into ST15N
+    // and ST16N, which set no route; with those dropped no train reaches
+    // either (2026-11-17 yard). No train could ever leave them before.
+    unworked.sort();
+    assert_eq!(unworked, ["15", "16"], "platforms with no arrival");
     for (k, s) in y.signals.iter().enumerate() {
         if s.kind == SignalKind::Home {
             assert!(routes.iter().any(|r| r.entry == k), "{} sets no route", s.name);

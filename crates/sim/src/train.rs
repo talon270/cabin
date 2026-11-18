@@ -103,6 +103,10 @@ pub struct Train {
     /// The portal it was offered at; the body reports it while any of the
     /// train is still outside.
     pub from: Option<PortalId>,
+    /// Game seconds it stands at its platform before it takes a departure.
+    pub dwell_s: u32,
+    /// The tick its dwell ends, set when it comes to rest at a Starter.
+    pub dwell_until: Option<u64>,
 }
 
 /// Metres along `edge` in direction `forward` of a point `off` metres from
@@ -127,6 +131,8 @@ impl Train {
             leaving: None,
             route: None,
             from: None,
+            dwell_s: 0,
+            dwell_until: None,
         }
     }
 

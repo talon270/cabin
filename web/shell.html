@@ -1,11 +1,25 @@
 <!DOCTYPE html>
 <!--
   CABIN · PAGE SHELL
-  · layout: header bar, yard panel (two thirds), rack of three bays
-  · input: drag pans, wheel zooms; what they mean is decided in the wasm App
+  · layout: header bar, yard panel (two thirds) over a status line, rack
+    of three bays
+  · input: drag pans, wheel zooms, a click picks a signal; what a click
+    means is decided in the wasm App
+  · status line: the last result or refusal, and the chosen entry's exits
+    as buttons
+  · rack: due, at platform, ready to depart, rebuilt from App.rack()
+  · command menu: Ctrl/Cmd K, a native <dialog> with fuzzy match (UI card
+    No. 03, logic copied from design-catalogue/ui-tips.html)
+  · what is real: a dialog listing each layer's source, tag and date, and
+    every sim constant with its tag, read from the build
+  · keys: Space pause, Esc clear, Delete cancel the chosen route, T theme
+  · shift: `?mode=&seed=` picks and replays one; the header shows the three
+    numbers and each mode's bests; at the end the page pauses and saves
+    any best, merged per field with what another tab saved
   · theme tokens: Nothing OS Classic, light and dark (md/designs.md), with
     twr's measured dark contrast values
-  · storage: one key, `cabin.v1`, integer schema version, migration hook
+  · storage: one key, `cabin.v1`, integer schema version, migration hook;
+    an unreadable copy is kept under `cabin.v1.corrupt` (Guard 3)
   · boot: decode the inlined wasm, start the frame loop
   · failure: any boot or runtime error shows as an inline banner, never a modal
   Public namespace: window.CABIN
@@ -38,8 +52,14 @@
      generic sans-serif resolves to JetBrains Mono. */
   :root { --sans: "Liberation Sans", Arial, "Helvetica Neue", Helvetica, sans-serif;
           --mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
-          --fg: #000; --bg: #fff; --dim: #585a5a; --line: #c4c6c8; --hair: #b8b8bc; --panel: #f4f4f5; }
-  :root[data-theme="dark"] { --fg: #fff; --bg: #000; --dim: #acacb0; --line: #5a5a60; --hair: #6a6a70; --panel: #0b0b0c; }
+          --fg: #000; --bg: #fff; --dim: #585a5a; --line: #c4c6c8; --hair: #b8b8bc; --panel: #f4f4f5;
+          --elev: #fff; --elev-dim: #585a5a; --scrim: rgb(0 0 0 / .45); }
+  :root[data-theme="dark"] { --fg: #fff; --bg: #000; --dim: #acacb0; --line: #5a5a60; --hair: #6a6a70; --panel: #0b0b0c;
+          --elev: #57575b; --elev-dim: #d0d0d4; --scrim: rgb(0 0 0 / .6); }
+  /* --elev: the command menu's surface, twr's measured values. On a black
+     page a black scrim changes nothing, so dark lifts the surface instead
+     (ui rules, figure-ground): #57575b is 2.9:1 against black, white text
+     on it 7.2:1, its dim text #d0d0d4 4.7:1. */
 
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
@@ -54,7 +74,10 @@
   /* Tabular numbers (UI card No. 14), with reserved width so the bar never
      changes height as the clock ticks. */
   .val { display: inline-block; font-variant-numeric: tabular-nums lining-nums; text-align: right; }
-  #clock { min-width: 5ch; }
+  #clock { min-width: 8ch; }
+  #handled, #putbacks { min-width: 3ch; }
+  #delay { min-width: 5ch; }
+  .best { color: var(--dim); }
   /* Nothing OS feedback: an inline [SAVED], no toast. */
   .saved { font: 11px var(--mono); letter-spacing: .08em; color: var(--dim); visibility: hidden; }
   .saved.on { visibility: visible; }
@@ -77,10 +100,22 @@
   /* The panel two thirds, the rack one third (plan § Design). minmax(0, …)
      so a long rack row never widens its column, and the canvas row never
      grows to its own pixel height and loops the ResizeObserver (twr). */
-  main { flex: 1; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); min-height: 0; position: relative; }
-  #map { width: 100%; height: 100%; display: block; min-width: 0; min-height: 0; touch-action: none; cursor: crosshair; }
+  main { flex: 1; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); min-height: 0; }
+  .col { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+  #map { flex: 1; width: 100%; display: block; min-width: 0; min-height: 0; touch-action: none; cursor: crosshair; }
   #map.dragging { cursor: grabbing; }
-  .attr { position: absolute; left: 12px; bottom: 8px; font-size: 12px; color: var(--dim); pointer-events: none; }
+  #map.over { cursor: pointer; }
+  .attr { position: absolute; left: 12px; bottom: 76px; font-size: 12px; color: var(--dim); pointer-events: none; }
+  /* The status line: one result or refusal, then the chosen entry's exits.
+     A refusal is ink with a glyph, not red: red is an aspect (plan A7).
+     Its height is reserved, so the panel never jumps as it fills. */
+  .status { min-height: 68px; border-top: 1px solid var(--hair); padding: 8px 12px; display: flex; flex-wrap: wrap;
+            align-items: center; gap: 8px 12px; background: var(--panel); }
+  #msg { flex: 1 1 320px; font-variant-numeric: tabular-nums lining-nums; }
+  #msg.refused::before { content: "\00d7  REFUSED  "; font: 700 11px var(--mono); letter-spacing: .08em; }
+  #exits { display: flex; flex-wrap: wrap; gap: 8px; }
+  #exits button.set { background: var(--fg); color: var(--bg); }
+  .hint { font: 11px var(--mono); color: var(--dim); }
   .rack { border-left: 1px solid var(--hair); background: var(--panel); overflow-y: auto; padding: 12px;
           display: flex; flex-direction: column; gap: 12px; }
   .bay { border: 1px solid var(--hair); border-radius: 8px; background: var(--bg); }
@@ -88,38 +123,101 @@
   .bay .row, .bay .none { border-top: 1px solid var(--hair); padding: 10px 12px; }
   .bay .none { color: var(--dim); }
   .bay .num { font: 700 14px var(--mono); }
-  .bay .sub { color: var(--dim); font-size: 12px; }
+  .bay .sub { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums lining-nums; }
+  .bay .row { display: flex; align-items: center; gap: 12px; }
+  .bay .row > div { flex: 1; min-width: 0; }
+
+  /* Command menu (UI card No. 03) on the scrim. */
+  dialog.cmd { width: min(640px, 90vw); padding: 0; border: var(--bw) solid var(--fg); border-radius: 8px;
+               box-shadow: var(--sh); background: var(--elev); color: var(--fg); }
+  dialog.cmd::backdrop { background: var(--scrim); }
+  dialog.cmd input { width: 100%; height: 48px; border: 0; border-bottom: 1px solid var(--hair); padding: 0 14px;
+                     font: 14px var(--mono); background: transparent; color: var(--fg); outline: none; }
+  dialog.cmd .list { max-height: 50vh; overflow-y: auto; padding: 6px; }
+  dialog.cmd .list button { display: flex; justify-content: space-between; width: 100%; height: 40px; margin: 2px 0;
+                            box-shadow: none; border: 1px solid transparent; background: transparent; text-transform: none;
+                            letter-spacing: 0; font: 13px var(--mono); }
+  dialog.cmd .list button:focus, dialog.cmd .list button:hover { border-color: var(--fg); outline: none; }
+  dialog.cmd kbd { font: 11px var(--mono); color: var(--elev-dim); }
+  dialog.cmd .count { padding: 6px 14px 10px; color: var(--elev-dim); font: 11px var(--mono); }
+
+  /* What is real: the same surface as the command menu, wider, on the
+     same scrim. A tag is ink in a box, never a colour: red, yellow and
+     green are aspects (A7). */
+  dialog.real { width: min(1100px, 92vw); max-height: 86vh; }
+  dialog.real .head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+                      padding: 10px 14px; border-bottom: 1px solid var(--hair); }
+  dialog.real .body { max-height: calc(86vh - 72px); overflow-y: auto; padding: 4px 14px 14px; }
+  dialog.real h3 { margin: 14px 0 6px; }
+  dialog.real table { width: 100%; border-collapse: collapse; }
+  dialog.real td { padding: 6px 8px 6px 0; vertical-align: top; border-top: 1px solid var(--hair); }
+  dialog.real td:first-child { white-space: nowrap; font: 12px var(--mono); }
+  dialog.real td.v { font: 12px var(--mono); font-variant-numeric: tabular-nums lining-nums; text-align: right; white-space: nowrap; }
+  dialog.real .tag { font: 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
+                     border: 1px solid currentColor; border-radius: 4px; padding: 1px 5px; }
+  dialog.real .tag.assumed { border-width: 2px; font-weight: 700; }
+  dialog.real p, dialog.real .label { margin: 8px 0; color: var(--elev-dim); }
 </style>
 </head>
 <body>
   <header class="bar">
     <span class="brand">Cabin</span>
     <span><span class="label">Station</span> NDLS</span>
-    <span><span class="label">Clock</span> <span class="val" id="clock">00:00</span></span>
+    <span><span class="label">Clock</span> <span class="val" id="clock">00:00:00</span></span>
+    <span><span class="label">Speed</span> <span class="val" id="speed">x4</span></span>
+    <span><span class="label">Seed</span> <span class="val" id="seed">-</span></span>
+    <span><span class="label">Mode</span> <span id="mode">-</span> <span class="best" id="window"></span></span>
+    <span id="scores"><span class="label">Handled</span> <span class="val" id="handled">0</span> <span class="best" id="b-handled"></span>
+      &nbsp; <span class="label">Delay min</span> <span class="val" id="delay">0.0</span> <span class="best" id="b-delay"></span>
+      &nbsp; <span class="label">Put back</span> <span class="val" id="putbacks">0</span> <span class="best" id="b-putbacks"></span></span>
     <span class="grow"></span>
     <span class="saved" id="saved">[Saved]</span>
+    <button id="pause" type="button">Pause</button>
+    <button id="cmdopen" type="button">Commands <span class="hint">Ctrl K</span></button>
+    <button id="realopen" type="button">What is real</button>
     <button id="theme" type="button">Light</button>
   </header>
   <div class="banner" id="banner" role="alert"></div>
   <main>
-    <canvas id="map" aria-label="Track panel of New Delhi station: drag to pan, wheel to zoom"></canvas>
+    <div class="col">
+      <canvas id="map" aria-label="Track panel of New Delhi station: click a signal, then an exit; drag to pan, wheel to zoom"></canvas>
+      <div class="attr" id="attr"></div>
+      <div class="status" role="status" aria-live="polite">
+        <span id="msg">Click a signal to choose the entry of a route, or press Ctrl K.</span>
+        <span id="exits"></span>
+      </div>
+    </div>
     <aside class="rack" aria-label="Trains">
       <section class="bay" data-bay="due">
-        <h2><span class="label">Due</span><span class="label val">1</span></h2>
-        <div class="row"><div class="num">TEST</div>
-          <div class="sub">Skeleton train, portal N1 to P1. Not traffic: the timetable arrives with the controls.</div></div>
+        <h2><span class="label">Due</span><span class="label val">0</span></h2>
+        <div class="rows"></div>
       </section>
       <section class="bay" data-bay="platform">
         <h2><span class="label">At platform</span><span class="label val">0</span></h2>
-        <div class="none">No train.</div>
+        <div class="rows"></div>
       </section>
       <section class="bay" data-bay="depart">
         <h2><span class="label">Ready to depart</span><span class="label val">0</span></h2>
-        <div class="none">No train.</div>
+        <div class="rows"></div>
       </section>
     </aside>
-    <div class="attr" id="attr"></div>
   </main>
+  <dialog class="cmd" id="cmd" aria-label="Commands">
+    <input id="cmdq" type="text" autocomplete="off" spellcheck="false" placeholder="Type a command, or two signal names: hn3 p5" aria-label="Command">
+    <div class="list" id="cmdlist"></div>
+    <div class="count" id="cmdcount"></div>
+  </dialog>
+  <dialog class="cmd real" id="real" aria-labelledby="realtitle">
+    <div class="head"><span class="label" id="realtitle">What is real</span><button id="realclose" type="button">Close <span class="hint">Esc</span></button></div>
+    <div class="body">
+      <p>Each layer of the game, where it comes from, and how far to trust it. <b>Primary</b>: a rule read from its source. <b>Secondary</b>: a published figure not from its owner. <b>Authored</b>: placed by rule here. <b>Assumed</b>: a guess, to be checked.</p>
+      <table id="layers"></table>
+      <h3 class="label">Every constant of the simulation</h3>
+      <p>Read from the source the game was built from, so this list cannot differ from the build.</p>
+      <table id="consts"></table>
+      <p>Track data © OpenStreetMap contributors, available under the Open Database License (ODbL), openstreetmap.org/copyright. A game, not for real-world use.</p>
+    </div>
+  </dialog>
 
 <script>
 "use strict";
@@ -128,6 +226,7 @@ window.CABIN = (() => {
   // Chrome gives every file:// page one shared localStorage origin, so the
   // namespaced key keeps cabin from colliding with other local tools.
   const STORE_KEY = "cabin.v1";
+  const CORRUPT_KEY = STORE_KEY + ".corrupt";
   const SCHEMA_VERSION = 1;
   const systemTheme = () => matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
   const DEFAULTS = () => ({ v: SCHEMA_VERSION, settings: { theme: systemTheme() }, bests: {} });
@@ -160,7 +259,7 @@ window.CABIN = (() => {
   function load() {
     let raw;
     try { raw = localStorage.getItem(STORE_KEY); }
-    catch (e) { writable = false; report("store", "Storage unavailable.", "Settings will not be kept this session."); return; }
+    catch (e) { writable = false; report("store", "Bests are not saved in this browser.", "Storage is blocked; the game plays on defaults."); return; }
     if (raw === null) return;
     try {
       let s = JSON.parse(raw);
@@ -170,8 +269,18 @@ window.CABIN = (() => {
       const theme = plain(s.settings) && (s.settings.theme === "light" || s.settings.theme === "dark") ? s.settings.theme : systemTheme();
       state = { ...DEFAULTS(), ...s, settings: { ...s.settings, theme }, bests: plain(s.bests) ? s.bests : {} };
     } catch (e) {
-      writable = false;
-      report("store", "Saved settings could not be read.", `${e.message}. Defaults are in use; the saved copy under ${STORE_KEY} is left untouched.`);
+      // Guard 3: keep the unreadable copy under its own key, then play and
+      // save on defaults. A different copy already kept there is never
+      // overwritten: then nothing is saved at all.
+      let kept = false;
+      try {
+        const old = localStorage.getItem(CORRUPT_KEY);
+        if (old === null || old === raw) { localStorage.setItem(CORRUPT_KEY, raw); kept = true; }
+      } catch (_) { /* refused: kept stays false */ }
+      writable = kept;
+      report("store", "Saved bests could not be read.", kept
+        ? `${e.message}. The saved copy is kept under ${CORRUPT_KEY}; defaults are in use, and new bests are saved.`
+        : `${e.message}. ${CORRUPT_KEY} already holds a different copy, or storage refused one, so nothing is overwritten and bests are not saved in this browser.`);
     }
   }
   const savedEl = el("saved");
@@ -179,7 +288,11 @@ window.CABIN = (() => {
   function save() {
     if (!writable) return;
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
-    catch (e) { report("store", "Could not save settings.", "Storage is full or blocked."); return; }
+    catch (e) {
+      writable = false;
+      report("store", "Bests are not saved in this browser.", "Storage is full or blocked; this page keeps them until it closes.");
+      return;
+    }
     savedEl.classList.add("on");
     clearTimeout(savedTimer);
     savedTimer = setTimeout(() => savedEl.classList.remove("on"), 1200);
@@ -199,11 +312,12 @@ window.CABIN = (() => {
   // A mouse press leaves no focus on the button, so a later key is not a
   // second press.
   themeBtn.addEventListener("pointerdown", e => e.preventDefault());
-  themeBtn.addEventListener("click", () => {
+  function toggleTheme() {
     state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
     applyTheme();
     save();
-  });
+  }
+  themeBtn.addEventListener("click", toggleTheme);
 
   // ---- Canvas ------------------------------------------------------------
   const canvas = el("map");
@@ -227,12 +341,11 @@ window.CABIN = (() => {
     catch (e) { report("frame", "The panel stopped.", String(e && e.message || e)); return false; }
   }
 
-  // ---- Input -------------------------------------------------------------
-  // Under this many CSS px of travel a press is a click, not a drag. Clicks
-  // mean nothing yet; B6 gives them signals.
+  // ---- Panel input -------------------------------------------------------
+  // Under this many CSS px of travel a press is a click, not a drag.
   const CLICK_SLOP_PX = 4;
+  const local = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
   function wireInput() {
-    const local = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
     let press = null;
     // The first pointer down owns the gesture; a second finger is ignored.
     canvas.addEventListener("pointerdown", e => {
@@ -242,8 +355,9 @@ window.CABIN = (() => {
       canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener("pointermove", e => {
-      if (!press || e.pointerId !== press.id) return;
       const [x, y] = local(e);
+      if (!press) { canvas.classList.toggle("over", app.hover(x, y)); return; }
+      if (e.pointerId !== press.id) return;
       if (!press.drag && Math.hypot(x - press.x, y - press.y) > CLICK_SLOP_PX) {
         press.drag = true;
         canvas.classList.add("dragging");
@@ -251,14 +365,16 @@ window.CABIN = (() => {
       if (press.drag) app.pan(x - press.lx, y - press.ly);
       press.lx = x; press.ly = y;
     });
-    const release = e => {
+    const release = (e, cancelled) => {
       if (!press || e.pointerId !== press.id) return;
       canvas.classList.remove("dragging");
-      app.release();
+      if (press.drag) app.release();
+      else if (!cancelled) app.click(press.x, press.y);
       press = null;
     };
-    canvas.addEventListener("pointerup", release);
-    canvas.addEventListener("pointercancel", release);
+    canvas.addEventListener("pointerup", e => release(e, false));
+    canvas.addEventListener("pointercancel", e => release(e, true));
+    canvas.addEventListener("pointerleave", () => { if (!press) app.hover(-1e6, -1e6); });
     canvas.addEventListener("contextmenu", e => e.preventDefault());
     canvas.addEventListener("wheel", e => {
       e.preventDefault();
@@ -268,22 +384,380 @@ window.CABIN = (() => {
     }, { passive: false });
   }
 
+  // A mouse press leaves no focus on a control, so a later Space pauses
+  // rather than pressing the control again. Keyboard focus still works.
+  const noFocusOnPress = b => b.addEventListener("pointerdown", e => e.preventDefault());
+  const button = (text, onClick, cls = "") => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    if (cls) b.className = cls;
+    noFocusOnPress(b);
+    b.addEventListener("click", onClick);
+    return b;
+  };
+
+  // ---- Status line ---------------------------------------------------------
+  const msgEl = el("msg"), exitsEl = el("exits");
+  let shownSeq = -1, shownExits = "";
+  function renderStatus() {
+    const seq = app.status_seq();
+    if (seq !== shownSeq) {
+      shownSeq = seq;
+      const t = app.status();
+      msgEl.textContent = t || "Click a signal to choose the entry of a route, or press Ctrl K.";
+      msgEl.classList.toggle("refused", app.status_refused());
+    }
+    const rows = app.exits();
+    const key = app.selected() + "|" + rows.join("|");
+    if (key === shownExits) return;
+    shownExits = key;
+    exitsEl.replaceChildren();
+    let set = -1;
+    for (const row of rows) {
+      const [id, name, on] = row.split("\t");
+      if (on === "1") set = Number(id);
+      const b = button(name, () => app.set_route(Number(id)), on === "1" ? "set" : "");
+      b.dataset.route = id;
+      b.addEventListener("pointerenter", () => app.preview_route(Number(id)));
+      b.addEventListener("focus", () => app.preview_route(Number(id)));
+      b.addEventListener("pointerleave", () => app.preview_route(-1));
+      b.addEventListener("blur", () => app.preview_route(-1));
+      exitsEl.append(b);
+    }
+    if (set >= 0) exitsEl.append(button("Cancel route", () => app.cancel_route(set)));
+  }
+
+  // ---- Rack ------------------------------------------------------------------
+  // Rows are keyed by train or portal. A row whose key and action stay the
+  // same only has its text updated, so a button is never replaced between
+  // the press and the click.
+  const bays = {};
+  for (const sec of document.querySelectorAll(".bay")) bays[sec.dataset.bay] = { rows: sec.querySelector(".rows"), count: sec.querySelector("h2 .val"), shape: null };
+  let shownRack = "";
+  function rackAction(action, arg) {
+    if (action === "accept") app.accept(Number(arg));
+    else if (action === "route") app.select(arg);
+  }
+  function renderRack() {
+    const rows = app.rack();
+    const all = rows.join("\n");
+    if (all === shownRack) return;
+    shownRack = all;
+    const by = { due: [], platform: [], depart: [] };
+    for (const r of rows) { const f = r.split("\t"); by[f[0]].push(f); }
+    for (const [name, bay] of Object.entries(bays)) {
+      const list = by[name];
+      bay.count.textContent = String(list.length);
+      const shape = list.map(f => f[1] + ":" + f[4]).join(",");
+      if (shape !== bay.shape) {
+        bay.shape = shape;
+        bay.rows.replaceChildren();
+        if (!list.length) {
+          const none = document.createElement("div");
+          none.className = "none";
+          none.textContent = "No train.";
+          bay.rows.append(none);
+        }
+        for (const [, key, , , action, arg] of list) {
+          const row = document.createElement("div");
+          row.className = "row";
+          row.dataset.key = key;
+          const text = document.createElement("div");
+          text.innerHTML = '<div class="num"></div><div class="sub"></div>';
+          row.append(text);
+          if (action) row.append(button(action === "accept" ? "Accept" : "Route", () => rackAction(action, arg)));
+          bay.rows.append(row);
+        }
+      }
+      list.forEach((f, i) => {
+        const row = bay.rows.children[i];
+        row.title = f[6] || "";
+        row.querySelector(".num").textContent = f[2];
+        row.querySelector(".sub").textContent = f[3];
+      });
+    }
+  }
+
+  // ---- Command menu (UI card No. 03) ---------------------------------------
+  // Logic copied from design-catalogue/ui-tips.html: query letters in order,
+  // runs and word starts rewarded; arrows, Enter, one Esc; focus returns.
+  const cmd = el("cmd"), cmdq = el("cmdq"), cmdlist = el("cmdlist");
+  let opener = null, toRun = null, matches = [], commands = [];
+  const STATIC = () => [
+    { title: app.paused() ? "Resume" : "Pause", keys: "Space", run: togglePause },
+    { title: "Clear the chosen signal", keys: "Esc", run: () => app.escape() },
+    { title: "Cancel the chosen signal's route", keys: "Del", run: () => app.cancel_selected() },
+    { title: state.settings.theme === "dark" ? "Light theme" : "Dark theme", keys: "T", run: toggleTheme },
+    { title: "What is real: sources, tags and constants", run: openReal },
+    { title: `Replay this shift (${app.mode()}, seed ${app.seed()})`, run: () => newShift(app.mode(), app.seed()) },
+    ...MODES.map(m => ({ title: `New shift: ${m}${m === "practice" ? ", not scored" : ""}`, run: () => newShift(m, null) })),
+  ];
+  function fuzzy(query, text) {
+    let from = 0, run = 0, score = 0;
+    for (const ch of query) {
+      const at = text.indexOf(ch, from);
+      if (at < 0) return -1;
+      run = at === from ? run + 1 : 0;
+      score += 1 + run * 2 + (at === 0 || text[at - 1] === " " ? 3 : 0);
+      from = at + 1;
+    }
+    return score;
+  }
+  function renderCommands() {
+    const q = cmdq.value.trim().toLowerCase();
+    matches = !q ? commands : commands.map(c => [fuzzy(q, c.title.toLowerCase()), c]).filter(([s]) => s >= 0)
+      .sort((a, b) => b[0] - a[0]).map(([, c]) => c);
+    cmdlist.replaceChildren();
+    matches.slice(0, 60).forEach((c, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.i = String(i);
+      b.append(c.title);
+      if (c.keys) { const k = document.createElement("kbd"); k.textContent = c.keys; b.append(k); }
+      cmdlist.append(b);
+    });
+    el("cmdcount").textContent = matches.length ? `${matches.length} commands${matches.length > 60 ? ", first 60 shown" : ""}` : "No matching command. Try fewer letters.";
+  }
+  function openCommands() {
+    if (cmd.open) return;
+    opener = document.activeElement;
+    toRun = null;
+    commands = [...STATIC(), ...app.commands().map(row => {
+      const [kind, id, title] = row.split("\t");
+      const n = Number(id);
+      return { title, run: kind === "accept" ? () => app.accept(n) : kind === "cancel" ? () => app.cancel_route(n) : () => app.set_route(n) };
+    })];
+    cmdq.value = "";
+    renderCommands();
+    cmd.showModal();
+    cmdq.focus();
+  }
+  function closeCommands(c = null) { toRun = c; cmd.close(); }
+  cmd.addEventListener("close", () => {
+    if (opener && opener.isConnected && opener !== document.body) opener.focus({ preventScroll: true });
+    const c = toRun;
+    toRun = null;
+    if (c) c.run();
+  });
+  cmd.addEventListener("click", e => {
+    const b = e.target.closest("[data-i]");
+    if (b) closeCommands(matches[Number(b.dataset.i)]);
+    else if (e.target === cmd) {
+      const r = cmd.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeCommands();
+    }
+  });
+  cmdq.addEventListener("input", renderCommands);
+  cmd.addEventListener("keydown", e => {
+    const bs = [...cmdlist.querySelectorAll("button")];
+    const i = bs.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); if (bs.length) bs[(i + 1) % bs.length].focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (i <= 0) cmdq.focus(); else bs[i - 1].focus(); }
+    else if (e.key === "Enter" && e.target === cmdq) { e.preventDefault(); if (matches[0]) closeCommands(matches[0]); }
+    else if (e.key === "Escape") {
+      // One press closes, and it does not also clear the chosen signal.
+      e.preventDefault(); e.stopPropagation(); closeCommands();
+    }
+  });
+  const cmdBtn = el("cmdopen");
+  noFocusOnPress(cmdBtn);
+  cmdBtn.addEventListener("click", openCommands);
+
+  // ---- What is real ----------------------------------------------------------
+  // Rows come from the App: layer counts and dates from the baked files,
+  // constants from the sim's own source. Built as text nodes.
+  const real = el("real");
+  let realOpener = null;
+  function fillTable(table, rows, cols) {
+    table.replaceChildren();
+    for (const row of rows) {
+      const f = row.split("\t");
+      const tr = table.insertRow();
+      cols.forEach((kind, i) => {
+        const td = tr.insertCell();
+        if (kind === "tag") {
+          const t = document.createElement("span");
+          t.className = "tag " + f[i];
+          t.textContent = f[i];
+          td.append(t);
+        } else {
+          if (kind) td.className = kind;
+          td.textContent = f[i];
+        }
+      });
+    }
+  }
+  function openReal() {
+    if (real.open) return;
+    if (cmd.open) closeCommands();
+    realOpener = document.activeElement;
+    fillTable(el("layers"), app.real(), ["", "tag", "why"]);
+    fillTable(el("consts"), app.constants(), ["", "v", "tag", "why"]);
+    real.showModal();
+    el("realclose").focus();
+  }
+  real.addEventListener("close", () => {
+    if (realOpener && realOpener.isConnected && realOpener !== document.body) realOpener.focus({ preventScroll: true });
+  });
+  real.addEventListener("click", e => {
+    const r = real.getBoundingClientRect();
+    if (e.target === real && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) real.close();
+  });
+  el("realclose").addEventListener("click", () => real.close());
+  const realBtn = el("realopen");
+  noFocusOnPress(realBtn);
+  realBtn.addEventListener("click", openReal);
+
+  // ---- Keys --------------------------------------------------------------
+  const pauseBtn = el("pause");
+  noFocusOnPress(pauseBtn);
+  function togglePause() {
+    app.set_paused(!app.paused());
+    pauseBtn.textContent = app.paused() ? "Resume" : "Pause";
+  }
+  pauseBtn.addEventListener("click", togglePause);
+  const typing = e => e.target.closest && e.target.closest("input, textarea, select, button, [contenteditable]");
+  document.addEventListener("keydown", e => {
+    if (!app || e.isComposing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && !e.altKey && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      if (real.open) return;
+      if (cmd.open) closeCommands(); else openCommands();
+      return;
+    }
+    if (mod || e.altKey || cmd.open || real.open) return;
+    if (e.key === "Escape") { app.escape(); return; }
+    if (typing(e)) return;
+    if (e.key === " ") { e.preventDefault(); togglePause(); }
+    else if (e.key === "Delete" || e.key === "Backspace") { if (app.cancel_selected()) e.preventDefault(); }
+    else if (e.key.toLowerCase() === "t") toggleTheme();
+  });
+
+  // ---- Seed --------------------------------------------------------------
+  // `?seed=` replays a shift. A malformed one is said in the status line and
+  // a random seed is used and printed; it never stops the page.
+  function pickSeed() {
+    const raw = new URLSearchParams(location.search).get("seed");
+    const random = Math.floor(Math.random() * 1e9);
+    if (raw === null) return [random, ""];
+    if (/^\d{1,9}$/.test(raw)) return [Number(raw), ""];
+    return [random, `Seed "${raw.slice(0, 20)}" is not a whole number below 1000000000; playing seed ${random}.`];
+  }
+
+  // ---- Mode ------------------------------------------------------------------
+  // `?mode=` picks the shift; a malformed one is said and Normal is played.
+  const MODES = ["practice", "light", "normal", "peak"];
+  function pickMode() {
+    const raw = new URLSearchParams(location.search).get("mode");
+    if (raw === null) return ["normal", ""];
+    if (MODES.includes(raw)) return [raw, ""];
+    return ["normal", `Mode "${raw.slice(0, 20)}" is not one of ${MODES.join(", ")}; playing normal.`];
+  }
+  // A new page load is a new shift: the URL carries the mode and the seed,
+  // so the address bar is the replay record.
+  function newShift(mode, seed) {
+    const q = new URLSearchParams({ mode });
+    if (seed !== null) q.set("seed", String(seed));
+    location.search = "?" + q.toString();
+  }
+
+  // ---- Score and bests -------------------------------------------------------
+  // A best is kept per field, each in its own direction: more trains
+  // handled, less delay, fewer put-backs. One shift can set one field and
+  // not another, and a best can only improve.
+  const FIELDS = [["handled", (a, b) => Math.max(a, b)], ["delay_min", (a, b) => Math.min(a, b)], ["put_backs", (a, b) => Math.min(a, b)]];
+  const num = x => typeof x === "number" && Number.isFinite(x) && x >= 0;
+  function merge(a, b) {
+    if (!plain(a)) return plain(b) ? { ...b } : null;
+    if (!plain(b)) return { ...a };
+    const out = {};
+    for (const [k, better] of FIELDS) {
+      if (num(a[k]) && num(b[k])) out[k] = better(a[k], b[k]);
+      else if (num(a[k]) || num(b[k])) out[k] = num(a[k]) ? a[k] : b[k];
+    }
+    return out;
+  }
+  // Re-read the key before writing: another tab may have saved a best since
+  // this one loaded, and its value must not be lost.
+  function recordBest(mode, result) {
+    if (writable) {
+      try {
+        const s = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+        if (plain(s) && s.v === SCHEMA_VERSION && plain(s.bests)) {
+          for (const m of MODES) { const b = merge(state.bests[m], s.bests[m]); if (b) state.bests[m] = b; }
+        }
+      } catch (e) { /* unreadable now: load() reported it, and writable is false then */ }
+    }
+    const before = { ...(state.bests[mode] || {}) };
+    state.bests[mode] = merge(before, result);
+    save();
+    return FIELDS.map(([k]) => k).filter(k => state.bests[mode][k] !== before[k]);
+  }
+  const fmtDelay = x => x.toFixed(1);
+  function renderBests(mode) {
+    const b = plain(state.bests[mode]) ? state.bests[mode] : {};
+    el("b-handled").textContent = num(b.handled) ? `best ${b.handled}` : "";
+    el("b-delay").textContent = num(b.delay_min) ? `best ${fmtDelay(b.delay_min)}` : "";
+    el("b-putbacks").textContent = num(b.put_backs) ? `best ${b.put_backs}` : "";
+  }
+  let shownScore = "", ended = false;
+  const hhmm = s => `${pad(Math.floor(s / 3600) % 24)}:${pad(Math.floor(s / 60) % 60)}`;
+  function renderScore() {
+    const [handled, delay, putBacks, over] = app.score();
+    const key = `${handled}|${fmtDelay(delay)}|${putBacks}|${over}`;
+    if (key === shownScore) return;
+    shownScore = key;
+    el("handled").textContent = String(handled);
+    el("delay").textContent = fmtDelay(delay);
+    el("putbacks").textContent = String(putBacks);
+    if (!over || ended) return;
+    ended = true;
+    const mode = app.mode();
+    const better = recordBest(mode, { handled, delay_min: Math.round(delay * 10) / 10, put_backs: putBacks });
+    renderBests(mode);
+    if (!app.paused()) togglePause();
+    const names = { handled: "trains handled", delay_min: "delay", put_backs: "put-backs" };
+    app_say(`Shift over at ${hhmm(app.shift_window()[1])}: ${handled} train${handled === 1 ? "" : "s"} handled, ${fmtDelay(delay)} min delay, ${putBacks} put back.`
+      + (better.length ? ` New best: ${better.map(k => names[k]).join(", ")}.` : " No new best.")
+      + (writable ? "" : " Bests are not saved in this browser.")
+      + " Ctrl K for a replay or a new shift; Space plays on, unscored.");
+  }
+  // The page's own line in the status area, until the App says something new.
+  function app_say(text) {
+    msgEl.textContent = text;
+    msgEl.classList.remove("refused");
+    shownSeq = app.status_seq();
+  }
+
   const pad = n => String(n).padStart(2, "0");
   function boot(wasmBase64) {
     load();
     applyTheme();
     fit();
+    const [seed, seedNote] = pickSeed();
+    const [mode, modeNote] = pickMode();
     try {
       const bytes = Uint8Array.from(atob(wasmBase64), c => c.charCodeAt(0));
       wasm_bindgen.initSync({ module: bytes });
-      app = new wasm_bindgen.App("map");
+      app = new wasm_bindgen.App("map", seed, mode);
     } catch (e) {
       report("boot", "The panel failed to start.", String(e && e.message || e));
       return;
     }
     el("attr").textContent = `© OpenStreetMap contributors, extract of ${app.osm_base().slice(0, 10)} · `
       + `not to scale across the tracks (spacing ×${app.stretch()}) · not for real-world use`;
+    el("seed").textContent = String(app.seed());
+    el("speed").textContent = "x" + app.time_scale();
+    el("mode").textContent = mode;
+    const [w0, w1] = app.shift_window();
+    el("window").textContent = mode === "practice" ? "not scored" : `${hhmm(w0)}-${hhmm(w1)}`;
+    el("scores").hidden = mode === "practice";
+    renderBests(mode);
     wireInput();
+    if (seedNote || modeNote) msgEl.textContent = [seedNote, modeNote].filter(Boolean).join(" ");
+    shownSeq = app.status_seq();
     let last = performance.now();
     let shown = -1;
     function tick(now) {
@@ -292,8 +766,11 @@ window.CABIN = (() => {
       // A pixel-ratio change at the same CSS size fires no ResizeObserver.
       if ((window.devicePixelRatio || 1) !== dpr) fit();
       if (!draw(dt)) return;
-      const s = Math.floor(app.real_s());
-      if (s !== shown) { shown = s; el("clock").textContent = `${pad(Math.floor(s / 60))}:${pad(s % 60)}`; }
+      const s = Math.floor(app.clock_s());
+      if (s !== shown) { shown = s; el("clock").textContent = `${hhmm(s)}:${pad(s % 60)}`; }
+      renderStatus();
+      renderScore();
+      renderRack();
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);

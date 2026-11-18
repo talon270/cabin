@@ -7,6 +7,7 @@
 //!     overrides' [signal] lines, and reports the routes they give
 //!   · runs the gate, then compares the new yard with the one on disk, and
 //!     writes data/ndls.yard only when both pass
+//!   · bakes data/ndls.traffic.toml into data/ndls.traffic (`traffic.rs`)
 //!
 //! Usage, from anywhere:  cargo run -p cabin-osm [-- --accept-worse]
 //!
@@ -27,6 +28,8 @@
 //! Overpass answer or a deleted crossover still passes the gate.
 //! `--accept-worse` writes it anyway, for a loss you meant, such as a new
 //! [drop] line.
+
+mod traffic;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
@@ -1221,8 +1224,11 @@ fn losses(old: &Yard, new: &Yard) -> Vec<String> {
 
 // ---- run --------------------------------------------------------------------
 
+/// `CABIN_DATA` points the extractor at a copy of `data/`, so a failure
+/// drill (tools/verify_b8.py) can break an input without touching the real
+/// files.
 fn data_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
+    std::env::var_os("CABIN_DATA").map_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"), Into::into)
 }
 
 fn run() -> Result<(Yard, Report, usize), String> {
@@ -1235,7 +1241,26 @@ fn run() -> Result<(Yard, Report, usize), String> {
     Ok((yard, rep, ov.lines()))
 }
 
+/// The traffic profile does not depend on the map, so it is baked first,
+/// and a yard that fails its gate still leaves a fresh profile.
+fn bake_traffic() -> Result<usize, String> {
+    let dir = data_dir();
+    let text = std::fs::read_to_string(dir.join("ndls.traffic.toml")).map_err(|e| format!("data/ndls.traffic.toml: {e}"))?;
+    let out = traffic::bake(&text)?;
+    let tmp = dir.join("ndls.traffic.tmp");
+    std::fs::write(&tmp, &out).map_err(|e| format!("ndls.traffic.tmp: {e}"))?;
+    std::fs::rename(&tmp, dir.join("ndls.traffic")).map_err(|e| format!("ndls.traffic: {e}"))?;
+    Ok(out.len())
+}
+
 fn main() {
+    match bake_traffic() {
+        Ok(n) => println!("wrote data/ndls.traffic ({n} bytes)\n"),
+        Err(e) => {
+            eprintln!("cabin-osm: {e}; the old data/ndls.traffic stays.");
+            std::process::exit(1);
+        }
+    }
     let (yard, rep, ov_lines) = match run() {
         Ok(x) => x,
         Err(e) => {
@@ -1548,6 +1573,15 @@ mod tests {
         let m = |k: &str| doc["mix"][k]["v"].as_float().unwrap();
         assert!((m("emu_local") + m("express") + m("premium") - 1.0).abs() < 1e-9);
         assert!((m("rajdhani") + m("shatabdi") + m("duronto") - m("premium")).abs() < 1e-9);
+    }
+
+    /// The committed `.traffic` must be what the committed `.toml` bakes to.
+    #[test]
+    fn committed_traffic_matches_its_source() {
+        let dir = data_dir();
+        let toml = std::fs::read_to_string(dir.join("ndls.traffic.toml")).unwrap();
+        let baked = std::fs::read_to_string(dir.join("ndls.traffic")).expect("data/ndls.traffic; run cargo run -p cabin-osm");
+        assert_eq!(traffic::bake(&toml).unwrap(), baked, "data/ndls.traffic is stale; run cargo run -p cabin-osm");
     }
 
     /// The committed `.yard` must be what the committed OSM answer produces.

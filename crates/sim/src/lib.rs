@@ -5,33 +5,55 @@
 //!   · route: every route a signal can set, built at load
 //!   · interlock: the one function that clears a signal
 //!   · train: train bodies, motion, and the occupancy the interlocking reads
+//!   · traffic: the profile, modes and the schedule of one shift
+//!   · score: trains handled, delay held at red, put-backs
 //!   · World: the yard, the interlocking and the trains, stepped by ticks
 //!   · NDLS: the New Delhi yard, baked into the build
 //!   · Rng: the seeded generator; one seed gives one run
 //!
-//! Nothing in `World` is random yet: B5's soak and fuzz drive it from an
-//! `Rng`, and B7's traffic will. `World::spawn` offers a train by hand until
-//! then.
+//! `World::new` offers no train: tests call `World::spawn`. `World::shift`
+//! offers the trains of one shift, generated from the seed and the mode;
+//! tick 0 is SHIFT_START_S on the game clock. An offered train waits outside its portal until the player
+//! accepts it (`Action::Accept`), which is Line Clear given to the station
+//! in rear; accepting only trains the yard can take is how the player keeps
+//! the station from gridlocking.
 
 pub mod consts;
 pub mod interlock;
 pub mod route;
+pub mod score;
 pub mod signal;
+pub mod traffic;
 pub mod train;
 pub mod yard;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
-use consts::{BRAKE_MS2, FOULING_M, SPEED_NORMAL_KMH, SPEED_REVERSE_KMH};
+use consts::{BRAKE_MS2, FOULING_M, SHIFT_LEN_S, SHIFT_START_S, SPEED_NORMAL_KMH, SPEED_REVERSE_KMH, TICK_HZ};
 use interlock::{Aspect, Interlocking, Refusal};
 use route::{Exit, Lie, PortalId, Res, RouteId, SignalId};
+use score::Score;
+use traffic::{Mode, Profile};
 use train::{Occupancy, Train, TrainId, along, kmh};
-use yard::{Junction, Yard};
+use yard::{Junction, SignalKind, Yard};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
     SetRoute { entry: SignalId, exit: Exit },
     CancelRoute(RouteId),
+    /// Take the first train offered at this portal into the box.
+    Accept(PortalId),
+}
+
+/// A train offered at a portal and not yet accepted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Offer {
+    pub len_m: f64,
+    pub dwell_s: u32,
+    /// The tick it was offered, which is the tick it was due.
+    pub since: u64,
+    /// Its row in the profile's pool; None for a test's train.
+    pub train: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,6 +62,16 @@ pub struct World {
     pub lock: Interlocking,
     pub trains: BTreeMap<TrainId, Train>,
     pub tick: u64,
+    /// Per portal, the trains offered there, first offered first.
+    pub offers: BTreeMap<PortalId, VecDeque<Offer>>,
+    /// The shift's trains not yet due, first due first: (tick, portal, offer).
+    pending: VecDeque<(u64, PortalId, Offer)>,
+    /// The shift's mode and profile; None in a world tests drive.
+    pub mode: Option<Mode>,
+    pub profile: Option<Profile>,
+    /// Each accepted train's row in the pool.
+    labels: BTreeMap<TrainId, usize>,
+    pub score: Score,
     next_train: TrainId,
 }
 
@@ -47,7 +79,55 @@ impl World {
     pub fn new(yard: Yard) -> World {
         let routes = route::build_routes(&yard);
         let lock = Interlocking::new(&yard, routes);
-        World { yard, lock, trains: BTreeMap::new(), tick: 0, next_train: 0 }
+        World {
+            yard,
+            lock,
+            trains: BTreeMap::new(),
+            tick: 0,
+            offers: BTreeMap::new(),
+            pending: VecDeque::new(),
+            mode: None,
+            profile: None,
+            labels: BTreeMap::new(),
+            score: Score::default(),
+            next_train: 0,
+        }
+    }
+
+    /// One shift of `mode` from `seed`: the schedule's trains, each offered
+    /// when due at a portal on its side, drawn from a third stream so the
+    /// portal draw does not shift the schedule's.
+    pub fn shift(yard: Yard, profile: Profile, mode: Mode, seed: u64) -> World {
+        let mut w = World::new(yard);
+        let (north, south): (Vec<PortalId>, Vec<PortalId>) = (0..w.yard.portals.len()).partition(|&p| w.yard.portals[p].name.starts_with('N'));
+        let mut rng = Rng::new(seed ^ 0x9D07_7A15_C4B1_0B5E);
+        for d in traffic::schedule(&profile, mode, seed, SHIFT_START_S, SHIFT_LEN_S) {
+            let side = if d.north && !north.is_empty() || south.is_empty() { &north } else { &south };
+            let p = side[rng.below(side.len())];
+            let tick = u64::from((d.at_s - SHIFT_START_S) * TICK_HZ);
+            w.pending.push_back((tick, p, Offer { len_m: profile.pool[d.train].len_m, dwell_s: d.dwell_s, since: tick, train: Some(d.train) }));
+        }
+        w.mode = Some(mode);
+        w.profile = Some(profile);
+        w.offer_due();
+        w
+    }
+
+    fn offer_due(&mut self) {
+        while let Some(&(_, p, o)) = self.pending.front().filter(|x| x.0 <= self.tick) {
+            self.offers.entry(p).or_default().push_back(o);
+            self.pending.pop_front();
+        }
+    }
+
+    /// The shift is scored and not over.
+    fn scoring(&self) -> bool {
+        self.mode.is_some_and(Mode::scored) && self.score.over.is_none()
+    }
+
+    /// Game seconds after midnight.
+    pub fn clock_s(&self) -> u64 {
+        u64::from(SHIFT_START_S) + self.tick / u64::from(TICK_HZ)
     }
 
     /// A refused action changes nothing: every check runs before the first
@@ -58,10 +138,15 @@ impl World {
             Action::SetRoute { entry, exit } => self.lock.request(&self.yard, &occ, entry, exit).map(|_| ()),
             Action::CancelRoute(r) => {
                 self.lock.cancel(&self.yard, &occ, r)?;
+                let entry = self.lock.routes()[r].entry;
+                // A put-back: a train had taken the route, or was running
+                // up to its entry signal.
+                if self.scoring() && self.trains.values().any(|t| t.route == Some(r) || t.next_signal == Some(entry)) {
+                    self.score.put_backs += 1;
+                }
                 // A train that can still stop at the signal gives the route
                 // up; one that cannot runs on under the locks, which stay
                 // for APPROACH_RELEASE_S.
-                let entry = self.lock.routes()[r].entry;
                 for t in self.trains.values_mut().filter(|t| t.route == Some(r)) {
                     let d = t.to_signal(&self.yard, entry).unwrap_or(0.0);
                     if t.v * t.v / (2.0 * BRAKE_MS2) <= d {
@@ -76,6 +161,16 @@ impl World {
                         self.lock.untake(r);
                     }
                 }
+                Ok(())
+            }
+            Action::Accept(p) => {
+                let Some(&o) = self.offers.get(&p).and_then(|q| q.front()) else { return Err(Refusal::NotOffered { portal: p }) };
+                let id = self.spawn(p, o.len_m)?;
+                self.trains.get_mut(&id).unwrap().dwell_s = o.dwell_s;
+                if let Some(k) = o.train {
+                    self.labels.insert(id, k);
+                }
+                self.offers.get_mut(&p).unwrap().pop_front();
                 Ok(())
             }
         }
@@ -154,8 +249,10 @@ impl World {
     fn step(&mut self) {
         self.tick += 1;
         self.lock.set_now(self.tick);
+        self.offer_due();
         let ids: Vec<TrainId> = self.trains.keys().copied().collect();
         for id in ids {
+            self.start_dwell(id);
             self.take_route(id);
             let y = &self.yard;
             let t = self.trains.get_mut(&id).unwrap();
@@ -167,18 +264,56 @@ impl World {
                 let p = t.leaving.expect("only a leaving train runs off its run");
                 self.trains.remove(&id);
                 self.lock.train_left(p);
+                if self.scoring() {
+                    self.score.handled += 1;
+                }
             }
         }
         let occ = self.occupancy();
         self.lock.release_behind(&self.yard, &occ);
+        if self.scoring() {
+            let outside = self.offers.values().map(|q| q.len() as u64).sum::<u64>();
+            let held = self.trains.values().filter(|t| self.held(t)).count() as u64;
+            self.score.held_ticks += outside + held;
+            if self.tick >= u64::from(SHIFT_LEN_S * TICK_HZ) {
+                self.score.over = Some(self.tick);
+            }
+        }
+    }
+
+    /// Stopped at a red signal with somewhere to go: at its Home, or at
+    /// its Starter after the dwell. Dwell is not delay.
+    fn held(&self, t: &Train) -> bool {
+        let Some(s) = t.next_signal else { return false };
+        t.v == 0.0
+            && t.route.is_none()
+            && match self.yard.signals[s].kind {
+                SignalKind::Home => true,
+                SignalKind::Starter => t.dwell_until.is_some_and(|u| self.tick >= u),
+            }
+    }
+
+    /// A train at rest at a Starter begins its dwell, once.
+    fn start_dwell(&mut self, id: TrainId) {
+        let y = &self.yard;
+        let t = self.trains.get_mut(&id).unwrap();
+        let Some(s) = t.next_signal else { return };
+        if t.dwell_until.is_none() && y.signals[s].kind == SignalKind::Starter && t.v == 0.0 && t.to_signal(y, s).is_some_and(|d| d < 1.0) {
+            t.dwell_until = Some(self.tick + u64::from(t.dwell_s * TICK_HZ));
+        }
     }
 
     /// A train whose next signal is off takes that signal's route: its run
-    /// grows by the route's path and its authority moves to the exit.
+    /// grows by the route's path and its authority moves to the exit. At a
+    /// Starter it waits for its dwell to end first, so a departure set
+    /// early shows green and the train stays until its time.
     fn take_route(&mut self, id: TrainId) {
         let t = &self.trains[&id];
         let Some(s) = t.next_signal else { return };
         if t.route.is_some() {
+            return;
+        }
+        if self.yard.signals[s].kind == SignalKind::Starter && t.dwell_until.is_none_or(|u| self.tick < u) {
             return;
         }
         let Some(r) = self.lock.takeable(s) else { return };
@@ -222,12 +357,88 @@ impl World {
     pub fn lie(&self, k: usize) -> Lie {
         self.lock.lie(k)
     }
+
+    // ---- Names, for the panel's text ---------------------------------------
+
+    /// A train's number from the pool; a test's train is `T1`, `T2`, ...
+    pub fn train_name(&self, t: TrainId) -> String {
+        match (self.labels.get(&t), &self.profile) {
+            (Some(&k), Some(p)) => p.pool[k].number.clone(),
+            _ => format!("T{}", t + 1),
+        }
+    }
+
+    /// An offer's number and the train's full name, or "" for a test's.
+    pub fn offer_name(&self, o: &Offer) -> (String, String) {
+        match (o.train, &self.profile) {
+            (Some(k), Some(p)) => (p.pool[k].number.clone(), p.pool[k].name.clone()),
+            _ => (String::new(), String::new()),
+        }
+    }
+
+    /// A train's full name from the pool, or "".
+    pub fn train_title(&self, t: TrainId) -> String {
+        match (self.labels.get(&t), &self.profile) {
+            (Some(&k), Some(p)) => p.pool[k].name.clone(),
+            _ => String::new(),
+        }
+    }
+
+    pub fn exit_name(&self, exit: Exit) -> String {
+        let y = &self.yard;
+        match exit {
+            Exit::Berth { platform, starter } => format!("P{} ({})", y.platforms[platform].name, y.signals[starter].name),
+            Exit::Portal(p) => y.portals[p].name.clone(),
+        }
+    }
+
+    pub fn route_name(&self, r: RouteId) -> String {
+        let route = &self.lock.routes()[r];
+        format!("{} to {}", self.yard.signals[route.entry].name, self.exit_name(route.exit))
+    }
+
+    /// A track section by the platform it serves, else by its number.
+    pub fn res_name(&self, r: Res) -> String {
+        match r {
+            Res::Edge(e) => match self.yard.platforms.iter().find(|p| p.edge == e) {
+                Some(p) => format!("the platform {} line", p.name),
+                None => format!("track section {e}"),
+            },
+            Res::Point(k) => format!("points {k}"),
+            Res::Crossing(k) => format!("crossing {k}"),
+        }
+    }
+
+    /// One line for the panel: what was refused, and the route, train or
+    /// point in the way.
+    pub fn describe(&self, a: Action, r: Refusal) -> String {
+        let what = match a {
+            Action::SetRoute { entry, exit } => format!("{} to {}", self.yard.signals[entry].name, self.exit_name(exit)),
+            Action::CancelRoute(id) => format!("Cancel {}", self.route_name(id)),
+            Action::Accept(p) => format!("Accept at {}", self.yard.portals[p].name),
+        };
+        let mmss = |s: u32| format!("{}:{:02}", s / 60, s % 60);
+        let why = match r {
+            Refusal::NoSuchRoute => match a {
+                Action::CancelRoute(_) => "that route is not set".to_string(),
+                _ => "no such route".to_string(),
+            },
+            Refusal::Conflict { with, at } => format!("{} holds {}", self.route_name(with), self.res_name(at)),
+            Refusal::Occupied { at, by } => format!("{} stands on or foul of {}", self.train_name(by), self.res_name(at)),
+            Refusal::OverlapOccupied { at, by } => format!("{} stands in the overlap, on or foul of {}", self.train_name(by), self.res_name(at)),
+            Refusal::NoLineClear { portal, wait_s } => format!("no Line Clear beyond {} for {}", self.yard.portals[portal].name, mmss(wait_s)),
+            Refusal::TrainPastSignal { train } => format!("{} is already past the signal", self.train_name(train)),
+            Refusal::ApproachLocked { release_in_s } => format!("approach locked, released in {}", mmss(release_in_s)),
+            Refusal::NotOffered { portal } => format!("no train is offered at {}", self.yard.portals[portal].name),
+        };
+        format!("{what}: refused, {why}.")
+    }
 }
 
 /// SplitMix64, copied from `twr/crates/sim/src/lib.rs`. Small, fast, and
 /// identical on every platform, which is all a replayable game needs;
 /// nothing here is security-sensitive.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Rng(u64);
 
 impl Rng {
