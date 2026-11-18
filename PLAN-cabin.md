@@ -2,7 +2,7 @@
 
 Written 2026-11-14, against `games/cabin/` as of today (the folder holds only this file; new project).
 Method: `/flow` shape questions answered by you in this session (Phase 0, six forks, pre-mortem, design, skill scan). `twr/` read as the sibling: `README.md`, `Cargo.toml`, `build.sh`, `fetch-osm.sh`, `data/vidp.overrides.toml`, the head of `data/vidp.twr`. `rails/README.md`, `rails/PLAN-rails.md` and `rails/research.md` § III-D, GR 3.09–3.12 and GR 9.01 read for the rules. One OpenStreetMap query run for New Delhi station (tags only, no geometry). Six web searches for an NDLS signalling diagram and a timetable source. `cargo`, the `wasm32-unknown-unknown` target, `wasm-bindgen 0.2.130` and `wasm-opt 130` confirmed present. Nothing was built.
-**Nothing below is implemented — this is the plan.**
+**Built: slices B0 to B9, 2026-11-15 to 2026-11-18.** Each slice's "built" note below records what changed from this text and what was measured. `README.md` describes the game as it stands. Open decisions: the 44 px rule (B6) and the delay measure (B7).
 
 ## Context
 
@@ -458,6 +458,18 @@ What each edge showed when made to fail, quoted from `verify_b8.py`:
 **Before and after, the same script.** `verify_b8.py` on the pre-B8 page: 12 checks failed. These were Guard 3 on all three bad stores, both storage messages, and the result line when storage is full. Then the script stopped at the missing "What is real" button. On the B8 page: 61/61. The colour rule passed both times: no aspect colour appears in the page, or in `lib.rs` outside `draw_heads`.
 
 **Not checked in B8:** the dialog's surface against the dimmed page was not measured. The text contrast inside the dialog was measured: 4.68:1 at least in dark, 6.94:1 in light. Frame time on a real GPU and with more than 8 trains was not measured. The DESIGN RISKs from B6 (44 px) and B7 (delay) are still open and yours.
+
+**B9 built 2026-11-18.** `README.md` in the `skills.md` Phase 6 shape. `STATE-projects.md`, `GUIDE-games.md` (commands row and the cabin notes) and the memory note updated; the `games/` row of `context.md` already named `cabin`. The README's commands, run as written:
+
+| Command | Printed |
+|---|---|
+| `./build.sh` | `built dist/index.html: 564944 bytes (wasm 1291757 -> 367895 after wasm-opt)` |
+| `cargo test --release --workspace` | 69 passed, 0 failed over 13 binaries; `b5_fuzz` finished in 128.67 s |
+| `python3 tools/verify_b8.py` | `61/61 passed`; frame time at Peak, seed 1: median 0.90 ms, 95th percentile 2.00 ms |
+| `cargo run -p cabin-osm` | `GATE PASSED. wrote data/ndls.yard (41753 bytes)`; `data/ndls.yard` and `data/ndls.traffic` byte-identical before and after (sha256) |
+| `./fetch-osm.sh` | Not run: it would replace `data/ndls.osm.json` with a new extract. `verify_b8.py` runs it against canned answers |
+
+Also run: `verify_b2.py` and `verify_b7.py` 36/36, `verify_b6.py` 74/75 (the 44 px check, unchanged). The first `cabin-osm` run went without `CARGO_TARGET_DIR` and wrote a 163 MB `target/` into the project; it was deleted with your yes, and the README now puts the variable on every `cargo` line.
 
 ## Skills
 
