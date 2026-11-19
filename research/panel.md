@@ -21,6 +21,7 @@ below was checked against the official Indian Railways PDFs.
 
 The 2023 chapter says yellow/white for a set route, while SEM §7.172 specifies
 white for a set-and-locked route. S3 used white, matching the specific
-set-and-locked indication; since 2026-11-19 the game draws PN-09's look
-instead, at your choice, and keeps PN-03's red. The sources do not assign colours to the point
+set-and-locked indication; on 2026-11-19 the game drew PN-09's look for
+a few hours, then went back to PN-01, PN-03 and PN-08 (`PLAN-redesign.md`
+A4), drawing unlit track dim grey so the layout reads. The sources do not assign colours to the point
 lies or to a signal at ON.

@@ -123,7 +123,7 @@ def guard3(b) -> None:
             saved = json.loads(stored(pg, "cabin.v1") or "null")
         except ValueError:
             saved = None
-        check(saved and saved.get("v") == 2 and "light" in saved.get("bests", {}) and "not saved" not in st, f"store {name}: the next best is saved: {saved and saved.get('bests')}")
+        check(saved and saved.get("v") == 3 and "light" in saved.get("bests", {}) and "not saved" not in st, f"store {name}: the next best is saved: {saved and saved.get('bests')}")
         clean(pg, f"store {name}")
         ctx.close()
 

@@ -20,6 +20,7 @@
 
 pub mod consts;
 pub mod interlock;
+pub mod level;
 pub mod route;
 pub mod score;
 pub mod signal;
@@ -111,6 +112,42 @@ impl World {
         w.profile = Some(profile);
         w.offer_due();
         w
+    }
+
+    /// A ladder level: its station's yard and its invented trains, each
+    /// offered when due at its named portal. Scored as a shift, so its end,
+    /// delay and put-backs work as at NDLS; it has no bests.
+    pub fn level(l: &level::Level) -> Result<World, String> {
+        let yard = Yard::parse(l.yard).map_err(|e| format!("data/{}.yard: {}", l.code, e.0))?;
+        let mut w = World::new(yard);
+        let pool = l.trains.iter().map(|t| traffic::PoolTrain { number: t.number.into(), class: 0, len_m: t.len_m, through: true, name: t.name.into() }).collect();
+        let profile = Profile {
+            written: "authored".into(),
+            hourly: [0; 24],
+            north_share: 0.5,
+            through_share: 1.0,
+            terminating: (0, 0),
+            classes: vec![traffic::Class { name: "invented".into(), share: 1.0, dwell: (0, 0) }],
+            pool,
+        };
+        let mut due = Vec::new();
+        for (k, t) in l.trains.iter().enumerate() {
+            let p = w.yard.portals.iter().position(|p| p.name == t.portal)
+                .ok_or_else(|| format!("level {}: train {} is due at portal {}, which {} does not have", l.code, t.number, t.portal, l.station))?;
+            let tick = u64::from(t.at_s * TICK_HZ);
+            due.push((tick, p, Offer { len_m: t.len_m, dwell_s: t.dwell_s, since: tick, train: Some(k) }));
+        }
+        due.sort_by_key(|d| d.0);
+        w.pending = due.into();
+        w.mode = Some(Mode::Level);
+        w.profile = Some(profile);
+        w.offer_due();
+        Ok(w)
+    }
+
+    /// A level whose every scripted train has left by a portal.
+    pub fn level_done(&self) -> bool {
+        self.mode == Some(Mode::Level) && self.profile.as_ref().is_some_and(|p| self.score.handled as usize == p.pool.len())
     }
 
     fn offer_due(&mut self) {

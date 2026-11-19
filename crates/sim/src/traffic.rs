@@ -111,6 +111,9 @@ pub enum Mode {
     Light,
     Normal,
     Peak,
+    /// A ladder level's scripted trains (`level.rs`): scored, never drawn
+    /// from the profile, and not one of the shift modes in `ALL`.
+    Level,
 }
 
 impl Mode {
@@ -122,6 +125,7 @@ impl Mode {
             Mode::Light => "light",
             Mode::Normal => "normal",
             Mode::Peak => "peak",
+            Mode::Level => "level",
         }
     }
 
@@ -136,6 +140,7 @@ impl Mode {
             Mode::Light => LIGHT_FRACTION,
             Mode::Normal => NORMAL_FRACTION,
             Mode::Peak => PEAK_FRACTION,
+            Mode::Level => 0.0,
         }
     }
 

@@ -10,7 +10,7 @@ the canvas, so their buttons are the control, as in verify_b6.py). After
 three routes, it reads each route's drawn edges from the read-only hook
 `CABIN.app.route_screen(id)` and samples the canvas every 1 px along them:
 a sample passes if a pixel within 1 px has the route colour (`--route`,
-green, the TTC wall's route colour). Any run of more than 2 px of failed samples
+white, the Indian Railways route colour). Any run of more than 2 px of failed samples
 is a gap. Samples off the canvas are skipped. A route not set must fail the
 same sampler. It saves a screenshot of each view.
 
@@ -193,14 +193,15 @@ def run_train_in(pg, tag: str) -> None:
 
 def dwell(pg) -> dict | None:
     """The first platform timer, and how many `--route` pixels light the
-    box it is drawn in (10 px under the label point)."""
+    text it is drawn as: left-aligned at the point, inside the platform's
+    box."""
     rows = app(pg, "a.dwell_screen()")
     if not rows:
         return None
     name, x, y, txt, late = rows[0].split("\t")
     lit = pg.evaluate("""([x, y]) => {""" + PIX + """
       const c = rgb('--route'); let n = 0;
-      for (let dy = 3; dy <= 17; dy++) for (let dx = -24; dx <= 24; dx++) if (near(x + dx, y + dy, c, 0)) n++;
+      for (let dy = -6; dy <= 6; dy++) for (let dx = 0; dx <= 40; dx++) if (near(x + dx, y + dy, c, 0)) n++;
       return n;
     }""", [float(x), float(y)])
     return {"platform": name, "timer": txt, "late": late == "true", "lit": lit}
@@ -268,7 +269,7 @@ with sync_playwright() as pw:
             control = next((g for g in (gaps(pg, r) for r in range(60) if r not in set_ids) if g["samples"] > 100), None)
             check(control is not None and not control["ok"], f"{tag}: an unset route reads as gapped ({control})")
             route_rgb = pg.evaluate("() => {" + PIX + " return rgb('--route'); }")
-            check(route_rgb[1] > 180 and route_rgb[1] > route_rgb[0] + 60 and route_rgb[1] > route_rgb[2] + 60, f"{tag}: the route colour is green ({route_rgb})")
+            check(route_rgb == [255, 255, 255], f"{tag}: the route colour is white ({route_rgb})")
             lz = lie(pg)
             check(lz["n"] >= 10 and lz["gap"] == lz["n"] and lz["solid"] == lz["n"], f"{tag}: point lie: the leg not lying is broken at the switch, the leg lying is not ({lz})")
             check(not errors, f"{tag}: no page errors ({errors[:2]})")
@@ -294,6 +295,9 @@ with sync_playwright() as pw:
                     break
                 app(pg, "a.skip(5)")
                 frames(pg)
+            # Paused by its button, so the frame loop adds no real time
+            # between the two reads: only skip(2) moves the clock.
+            pg.click("#pause")
             frames(pg)
             d0 = dwell(pg)
             rack_txt = " | ".join(r.split("\t")[3] for r in app(pg, "a.rack()"))

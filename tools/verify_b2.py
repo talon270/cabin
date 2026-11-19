@@ -52,7 +52,8 @@ def open_page(b, scheme="dark", reduce=False, seed: str | None = None):
     pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))
     pg.on("console", lambda m: m.type == "error" and errs.append(m.text))
     pg.on("request", lambda r: reqs.append(r.url))
-    pg.goto(PAGE)
+    # NDLS by name: a bare URL opens the first ladder level since B10.
+    pg.goto(PAGE + "?station=ndls")
     pg.wait_for_timeout(800)
     return ctx, pg, errs, reqs
 
@@ -175,8 +176,8 @@ with sync_playwright() as pw:
     check(not pg.is_visible("#banner") and not errs, f"seeded profile: no banner, no console errors {errs}")
     check(all(u.startswith("file://") for u in reqs), "seeded profile: no network request")
     mig = json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))
-    check(mig.get("v") == 2 and mig.get("bests") == {"light": {"handled": 3, "put_backs": 1}} and mig.get("v1_delay_totals") == {"light": 624.8},
-          f"v1 store migrates to v2 on load, is written back, and keeps the old delay total aside: {mig}")
+    check(mig.get("v") == 3 and mig.get("progress") == {} and mig.get("bests") == {"light": {"handled": 3, "put_backs": 1}} and mig.get("v1_delay_totals") == {"light": 624.8},
+          f"v1 store migrates through v2 to v3 on load, is written back, and keeps the old delay total aside: {mig}")
     check(mig.get("settings") == {"theme": "light"}, f"the old theme setting is kept, unread: {mig.get('settings')}")
     ctx.close()
 
@@ -189,7 +190,7 @@ with sync_playwright() as pw:
         check(app(pg, "a.game_s()") > g0, f"store holding {why}: the page still runs")
         # Guard 3 (B8): the unreadable copy moves to cabin.v1.corrupt and the
         # page saves again. Until B8 the copy was left in place, unsaved.
-        check(pg.evaluate("localStorage.getItem('cabin.v1.corrupt')") == bad and json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))["v"] == 2,
+        check(pg.evaluate("localStorage.getItem('cabin.v1.corrupt')") == bad and json.loads(pg.evaluate("localStorage.getItem('cabin.v1')"))["v"] == 3,
               f"store holding {why}: the copy is kept under cabin.v1.corrupt, and a readable store is written back at once")
         check(not errs, f"store holding {why}: no console errors {errs}")
         ctx.close()

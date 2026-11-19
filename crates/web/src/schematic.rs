@@ -1,6 +1,9 @@
 //! CABIN-WEB · SCHEMATIC LAYOUT
 //!   · turns running and siding topology into horizontal rows and 45° jogs
-//!   · leaves yard-only edges empty and gives them short approach stubs
+//!   · every node on a square grid: a column is one row high, so a 45° jog
+//!     over k rows spans k columns and lines that nearly align do align
+//!   · leaves yard-only edges undrawn; every line end that is not a portal
+//!     gets a mark: a buffer stop, or a dashed run on into the yard
 //!   · geometry is for the panel; the yard remains the source of connections
 
 use cabin_sim::yard::{Kind, Yard};
@@ -8,18 +11,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Tracks are separated enough to read as distinct lines at normal zoom.
 const ROW_M: f64 = 30.0;
-/// Drawn metres per surveyed metre along the axis: true length between the
-/// first and last platform end, a third of it in the throats. A panel is read
-/// at the platforms; at 0.35 throughout, P6 (435 m) drew 222 m wide while
-/// one 9-row jog in a throat drew 270 m.
-const ALONG_STATION: f64 = 1.0;
+/// Drawn metres per surveyed metre along the axis: half true length between
+/// the first and last platform end, 0.35 in the throats. At true length the
+/// default view was width-bound and rows drew 18 px apart; at half, 22 px,
+/// with every head 44 px from the next (PLAN-redesign.md B1).
+const ALONG_STATION: f64 = 0.5;
 const ALONG: f64 = 0.35;
-/// Nodes this close along the axis share one x, unless an edge joins them:
-/// one jog's width needs to push the next node right, and every later node
-/// moved with it, so platform ends 2 m apart in the yard drew 300 m apart.
-const COLUMN_M: f64 = 6.0;
-/// Leave visible flat before/after a 45° change of row.
-const JOG_PAD_M: f64 = 8.0;
+/// Every drawn x is a whole number of columns. A column is one row wide, as
+/// on a VDU drawn on a grid: off-grid x gave 86 positions for 140 nodes, 35
+/// pairs under 15 m apart, which read as lines that nearly meet.
+const GRID_M: f64 = ROW_M;
+/// Leave one visible column of flat before/after a 45° change of row.
+const JOG_PAD_M: f64 = GRID_M;
 /// Geography gives ordering only; these reproduce Panel's stable long axis.
 const SAMPLE_M: f64 = 10.0;
 const BIN_M: f64 = 50.0;
@@ -33,9 +36,19 @@ pub(crate) struct Schematic {
     pub node: Vec<Option<(f64, f64)>>,
     /// One polyline per edge in panel metres; empty for a yard edge.
     pub shape: Vec<Vec<(f64, f64)>>,
-    /// Short stubs where a yard edge leaves a drawn node.
-    pub stubs: Vec<[(f64, f64); 2]>,
+    /// Each drawn line end that is not a portal: where, the unit direction
+    /// the line runs out in, and whether yard track carries on beyond it.
+    pub ends: Vec<End>,
 }
+
+pub(crate) struct End {
+    pub at: (f64, f64),
+    pub out: (f64, f64),
+    pub into_yard: bool,
+}
+
+/// The nearest whole number of columns.
+fn snap(m: f64) -> f64 { (m / GRID_M).round() * GRID_M }
 
 impl Schematic {
     pub(crate) fn new(yard: &Yard) -> Schematic {
@@ -133,21 +146,21 @@ impl Schematic {
         let node_row = node_rows(yard, &inc, &groups, &crossover_roots, &reverse_ends, &row, &spans);
         let geom = geometry(yard, &axis, &drawn, &groups, &crossover_roots, &reverse_ends, &row, &node_row);
 
-        let mut stubs = Vec::new();
-        for edge in yard.edges.iter().filter(|e| e.kind == Kind::Yard) {
-            for n in [edge.a, edge.b] {
-                if let Some(at) = geom.0[n] {
-                    let other = if n == edge.a { edge.b } else { edge.a };
-                    let away = axis.rotate(yard.nodes[other].x, yard.nodes[other].y).1
-                        - axis.rotate(yard.nodes[n].x, yard.nodes[n].y).1;
-                    let dy = if away < 0.0 { -1.0 } else { 1.0 } * ROW_M * 0.6 / 2.0_f64.sqrt();
-                    let dx = if axis.u[other] < axis.u[n] { -1.0 } else { 1.0 } * dy.abs();
-                    let signed_dy = dy.signum() * dy.abs();
-                    stubs.push([(at.0, at.1), (at.0 + dx, at.1 + signed_dy)]);
-                }
-            }
+        // A line that stops in mid-air reads as a drawing fault; a real
+        // panel marks where track ends or leaves its control.
+        let portals: BTreeSet<usize> = yard.portals.iter().map(|p| p.node).collect();
+        let mut ends = Vec::new();
+        for (n, at) in geom.0.iter().enumerate() {
+            let Some(at) = *at else { continue };
+            let lines: Vec<usize> = (0..yard.edges.len()).filter(|&e| geom.1[e].len() >= 2 && (yard.edges[e].a == n || yard.edges[e].b == n)).collect();
+            if lines.len() != 1 || portals.contains(&n) { continue; }
+            let sh = &geom.1[lines[0]];
+            let from = if yard.edges[lines[0]].a == n { sh[1] } else { sh[sh.len() - 2] };
+            let d = (at.0 - from.0).hypot(at.1 - from.1).max(EPS);
+            let into_yard = yard.edges.iter().any(|e| e.kind == Kind::Yard && (e.a == n || e.b == n));
+            ends.push(End { at, out: ((at.0 - from.0) / d, (at.1 - from.1) / d), into_yard });
         }
-        Schematic { node: geom.0, shape: geom.1, stubs }
+        Schematic { node: geom.0, shape: geom.1, ends }
     }
 }
 
@@ -343,10 +356,13 @@ fn geometry(yard: &Yard, axis: &Axis, drawn: &[usize], groups: &BTreeMap<usize, 
         let edge = &yard.edges[e];
         (edge.a == a && edge.b == b) || (edge.a == b && edge.b == a)
     });
+    // A node joins the column before it when the drawn distance rounds to
+    // no column at all, unless an edge or a jog ties the two; else it starts
+    // a column at least one grid step on.
     let mut column: Vec<usize> = Vec::new();
     for k in 0..ordered.len() {
         let n = ordered[k];
-        let fits = column.first().is_some_and(|&c| axis.u[n] - axis.u[c] <= COLUMN_M)
+        let fits = column.first().is_some_and(|&c| snap(along(axis.u[c], axis.u[n])) == 0.0)
             && column.iter().all(|&c| !joined(c, n) && !need[n].iter().any(|&(a, _)| a == c));
         if fits {
             column.push(n);
@@ -354,7 +370,7 @@ fn geometry(yard: &Yard, axis: &Axis, drawn: &[usize], groups: &BTreeMap<usize, 
             column = vec![n];
             if k > 0 {
                 let prev = ordered[k - 1];
-                x[n] = x[prev] + along(axis.u[prev], axis.u[n]);
+                x[n] = x[prev] + snap(along(axis.u[prev], axis.u[n])).max(GRID_M);
             }
         }
         // A column's x is the largest any member needs; members move together.
@@ -387,17 +403,12 @@ fn geometry(yard: &Yard, axis: &Axis, drawn: &[usize], groups: &BTreeMap<usize, 
         let (left, right, fl, fr) = if pa.0 <= pb.0 { (pa, pb, foreign(edge.a), foreign(edge.b)) } else { (pb, pa, foreign(edge.b), foreign(edge.a)) };
         let d = (right.1 - left.1).abs();
         let (lo, hi) = (left.0, (right.0 - d).max(left.0));
-        let preferred = if fl && !fr { lo } else if fr && !fl { hi } else { (lo + hi) / 2.0 };
-        let mut candidates = vec![preferred, lo, hi, (lo + hi) / 2.0];
-        for (o, sh) in shapes.iter().enumerate() {
-            if sh.is_empty() || shares_node(yard, e, o) { continue; }
-            for p in sh {
-                for k in 0..=((d / ROW_M).round() as usize) {
-                    let at = p.0 - k as f64 * ROW_M;
-                    candidates.extend([at - 1.0, at + 1.0]);
-                }
-            }
-        }
+        // Every candidate is a grid column, so the jog's corners land on grid
+        // points too.
+        let preferred = if fl && !fr { lo } else if fr && !fl { hi } else { lo + snap((hi - lo) / 2.0) };
+        let steps = ((hi - lo) / GRID_M).round() as usize;
+        let mut candidates = vec![preferred];
+        candidates.extend((0..=steps).map(|i| lo + i as f64 * GRID_M));
         let build = |s: f64| -> Vec<(f64, f64)> {
             let s = s.clamp(lo, hi);
             let mut v = vec![left];
@@ -570,6 +581,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// PLAN-redesign.md A3: what made the lines look misaligned, printed
+    /// every run. Every vertex sits on the grid; the rest is reported.
+    #[test]
+    fn every_vertex_is_on_the_grid() {
+        let (yard, s) = layout();
+        let on = |v: f64| (v / GRID_M - (v / GRID_M).round()).abs() < 1e-6;
+        let off: Vec<usize> = s.shape.iter().enumerate()
+            .filter(|(_, sh)| sh.iter().any(|p| !on(p.0) || !on(p.1))).map(|(e, _)| e).collect();
+        let mut deg = vec![0usize; yard.nodes.len()];
+        for (e, sh) in s.shape.iter().enumerate() { if sh.len() >= 2 { deg[yard.edges[e].a] += 1; deg[yard.edges[e].b] += 1; } }
+        let portals: BTreeSet<usize> = yard.portals.iter().map(|p| p.node).collect();
+        let loose: Vec<usize> = (0..yard.nodes.len()).filter(|&n| deg[n] == 1 && !portals.contains(&n)).collect();
+        let mut xs: Vec<i64> = s.node.iter().flatten().map(|p| p.0.round() as i64).collect();
+        xs.sort(); xs.dedup();
+        let width = xs.last().unwrap_or(&0) - xs.first().unwrap_or(&0);
+        let unmarked: Vec<usize> = loose.iter().copied().filter(|&n| !s.ends.iter().any(|e| Some(e.at) == s.node[n])).collect();
+        println!("drawn nodes {}, columns {}, width {width} m, line ends {} ({} into yard), unmarked {}, off-grid edges {}",
+            s.node.iter().flatten().count(), xs.len(), loose.len(), s.ends.iter().filter(|e| e.into_yard).count(), unmarked.len(), off.len());
+        assert!(off.is_empty(), "edges with a vertex off the grid: {off:?}");
+        assert!(unmarked.is_empty(), "line ends with no mark: {unmarked:?}");
     }
 
     #[test]

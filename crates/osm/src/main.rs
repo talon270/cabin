@@ -1,13 +1,16 @@
 //! CABIN-OSM · NDLS YARD EXTRACTOR
-//!   · reads data/ndls.osm.json, the raw Overpass answer (fetch-osm.sh)
-//!   · applies data/ndls.overrides.toml: fixes OpenStreetMap gets wrong
+//!   · one station per run: `cabin-osm [code]`, default `ndls`; its box from
+//!     data/<code>.box, which fetch-osm.sh writes (NDLS's is built in)
+//!   · reads data/<code>.osm.json, the raw Overpass answer (fetch-osm.sh)
+//!   · applies data/<code>.overrides.toml: fixes OpenStreetMap gets wrong
 //!   · prints a data-quality report: junctions, points, dead ends, portals,
 //!     platform-to-portal reachability
 //!   · generates signals by rule (cabin-sim `signal.rs`), applies the
 //!     overrides' [signal] lines, and reports the routes they give
 //!   · runs the gate, then compares the new yard with the one on disk, and
-//!     writes data/ndls.yard only when both pass
-//!   · bakes data/ndls.traffic.toml into data/ndls.traffic (`traffic.rs`)
+//!     writes data/<code>.yard only when both pass
+//!   · bakes data/<code>.traffic.toml into data/<code>.traffic (`traffic.rs`),
+//!     when the station has one
 //!
 //! Usage, from anywhere:  cargo run -p cabin-osm [-- --accept-worse]
 //!
@@ -36,9 +39,33 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use cabin_sim::yard::*;
 use serde_json::Value;
 
-/// The box `fetch-osm.sh` asks for: south, west, north, east. The extract is
-/// clipped to it, so a running line leaving it becomes a portal.
-const BBOX: (f64, f64, f64, f64) = (28.632, 77.210, 28.652, 77.228);
+/// New Delhi's box, the one `fetch-osm.sh` asks for by default: south, west,
+/// north, east. The extract is clipped to its box, so a running line leaving
+/// it becomes a portal. Other stations' boxes come from data/<code>.box.
+const NDLS_BBOX: (f64, f64, f64, f64) = (28.632, 77.210, 28.652, 77.228);
+
+type BBox = (f64, f64, f64, f64);
+
+/// The station this run extracts: the first argument that is not a flag.
+fn station() -> String {
+    std::env::args().skip(1).find(|a| !a.starts_with("--")).unwrap_or_else(|| "ndls".to_string())
+}
+
+/// The station's box: data/<code>.box ("south,west,north,east"), else NDLS's.
+fn bbox(dir: &std::path::Path, code: &str) -> Result<BBox, String> {
+    match std::fs::read_to_string(dir.join(format!("{code}.box"))) {
+        Ok(t) => {
+            let v: Vec<f64> = t.trim().split(',').map(|x| x.trim().parse::<f64>()).collect::<Result<_, _>>()
+                .map_err(|_| format!("data/{code}.box: expected south,west,north,east, got '{}'", t.trim()))?;
+            match v[..] {
+                [s, w, n, e] if s < n && w < e => Ok((s, w, n, e)),
+                _ => Err(format!("data/{code}.box: expected south,west,north,east, got '{}'", t.trim())),
+            }
+        }
+        Err(_) if code == "ndls" => Ok(NDLS_BBOX),
+        Err(e) => Err(format!("data/{code}.box: {e}; fetch with ./fetch-osm.sh {code} <south,west,north,east>")),
+    }
+}
 
 /// Mean Earth radius (IUGG). An equirectangular projection around the box
 /// centre is off by under 0.1% across 2 km, which no rule here feels.
@@ -108,6 +135,8 @@ struct Overrides {
     join: BTreeMap<u64, u64>,
     /// generated signal name -> how to move or rename it.
     signal: BTreeMap<String, SignalOverride>,
+    /// platform way id -> the `ref` OpenStreetMap does not give it.
+    refs: BTreeMap<u64, String>,
 }
 
 /// One `[signal]` line: `HN4 = { shift_m = -40.0, name = "N4H" }`. Keyed by
@@ -122,7 +151,7 @@ struct SignalOverride {
 
 impl Overrides {
     fn lines(&self) -> usize {
-        self.kind.len() + self.platform.len() + self.drop.len() + self.join.len() + self.signal.len()
+        self.kind.len() + self.platform.len() + self.drop.len() + self.join.len() + self.signal.len() + self.refs.len()
     }
 }
 
@@ -183,6 +212,11 @@ fn parse_overrides(text: &str) -> Result<Overrides, String> {
                 "platform" => {
                     let w = val.as_integer().ok_or(format!("overrides.toml: [platform] {k} needs a way id"))?;
                     o.platform.insert(id(k)?, w as u64);
+                }
+                "ref" => {
+                    let r = val.as_str().filter(|r| !r.is_empty() && !r.contains(char::is_whitespace))
+                        .ok_or(format!("overrides.toml: [ref] {k} needs a ref such as \"1\" or \"2;3\""))?;
+                    o.refs.insert(id(k)?, r.to_string());
                 }
                 "drop" => {
                     // `= false` reads as "keep it"; dropping anyway would be a
@@ -441,9 +475,9 @@ fn kinds_summary(yard: &Yard) -> String {
     by_kind.iter().map(|(k, (c, l))| format!("{k} {c} edges/{l:.0} m")).collect::<Vec<_>>().join(", ")
 }
 
-fn extract(osm: &Osm, ov: &Overrides) -> Result<(Yard, Report), String> {
+fn extract(osm: &Osm, ov: &Overrides, bbox: BBox) -> Result<(Yard, Report), String> {
     let mut rep = Report::default();
-    let (s, w, n, e) = BBOX;
+    let (s, w, n, e) = bbox;
     let (lat0, lon0) = ((s + n) / 2.0, (w + e) / 2.0);
     let cos0 = lat0.to_radians().cos();
     let project = |lat: f64, lon: f64| -> P {
@@ -460,7 +494,7 @@ fn extract(osm: &Osm, ov: &Overrides) -> Result<(Yard, Report), String> {
     // Overrides naming something OpenStreetMap no longer holds refuse the build.
     let way_ids: BTreeSet<u64> = osm.ways.iter().map(|w| w.id).collect();
     let mut missing = Vec::new();
-    for k in ov.kind.keys().chain(ov.platform.keys()).chain(ov.drop.iter()) {
+    for k in ov.kind.keys().chain(ov.platform.keys()).chain(ov.drop.iter()).chain(ov.refs.keys()) {
         if !way_ids.contains(k) {
             missing.push(format!("way {k}"));
         }
@@ -727,16 +761,22 @@ fn extract(osm: &Osm, ov: &Overrides) -> Result<(Yard, Report), String> {
         }
         platform_ways += 1;
         let ring: Vec<P> = pw.nodes.iter().filter(|&&n| inside(n)).filter_map(|&n| xy(n)).collect();
-        let mut refs: Vec<String> = pw
-            .tags
-            .get("ref")
-            .map(|r| r.split(';').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
+        // NDLS maps platforms as closed areas; Holambi Kalan and Narela map
+        // each as an open line along its edge. Only an area has an inside:
+        // casting a ray against an open line put every track on one side
+        // "inside" the platform, and a 2-node line never got a vote.
+        let closed = pw.nodes.len() > 3 && pw.nodes.first() == pw.nodes.last();
+        let mut refs: Vec<String> = ov.refs.get(&pw.id).or(pw.tags.get("ref"))
+            // `2;3` and `2, 3` both mean an island serving 2 and 3 (DEE uses
+            // the comma). Unsplit, "2, 3" became one name with a space in it,
+            // which the yard file cannot hold.
+            .map(|r| r.split([';', ',']).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect())
             .unwrap_or_default();
         refs.sort_by_key(|r| (r.parse::<u32>().unwrap_or(u32::MAX), r.clone()));
         if refs.is_empty() {
             refs.push(format!("w{}", pw.id));
         }
-        if ring.len() < 3 {
+        if ring.len() < if closed { 3 } else { 2 } {
             for r in refs {
                 attaches.push(Attach { name: r, way: pw.id, edge: None, share: 0.0, len: 0.0 });
             }
@@ -765,6 +805,7 @@ fn extract(osm: &Osm, ov: &Overrides) -> Result<(Yard, Report), String> {
         let (t0, t1) = (along.iter().cloned().fold(f64::INFINITY, f64::min), along.iter().cloned().fold(f64::NEG_INFINITY, f64::max));
         let plat_len = t1 - t0;
         let in_ring = |q: P| -> bool {
+            if !closed { return false; }
             let mut inside = false;
             for w in ring.windows(2) {
                 let (a, b) = (w[0], w[1]);
@@ -1231,40 +1272,51 @@ fn data_dir() -> std::path::PathBuf {
     std::env::var_os("CABIN_DATA").map_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"), Into::into)
 }
 
-fn run() -> Result<(Yard, Report, usize), String> {
+fn run(code: &str) -> Result<(Yard, Report, usize), String> {
     let dir = data_dir();
-    let osm_text = std::fs::read_to_string(dir.join("ndls.osm.json"))
-        .map_err(|e| format!("data/ndls.osm.json: {e}; run ./fetch-osm.sh first"))?;
-    let ov_text = std::fs::read_to_string(dir.join("ndls.overrides.toml")).unwrap_or_default();
+    let bbox = bbox(&dir, code)?;
+    let osm_text = std::fs::read_to_string(dir.join(format!("{code}.osm.json")))
+        .map_err(|e| format!("data/{code}.osm.json: {e}; run ./fetch-osm.sh first"))?;
+    let ov_text = std::fs::read_to_string(dir.join(format!("{code}.overrides.toml"))).unwrap_or_default();
     let ov = parse_overrides(&ov_text)?;
-    let (yard, rep) = extract(&parse_osm(&osm_text)?, &ov)?;
+    let (yard, rep) = extract(&parse_osm(&osm_text)?, &ov, bbox)?;
     Ok((yard, rep, ov.lines()))
 }
 
 /// The traffic profile does not depend on the map, so it is baked first,
 /// and a yard that fails its gate still leaves a fresh profile.
-fn bake_traffic() -> Result<usize, String> {
+/// A station with no traffic file is skipped: the ladder stations run an
+/// authored timetable, not researched traffic (PLAN-redesign.md A6).
+fn bake_traffic(code: &str) -> Result<Option<usize>, String> {
     let dir = data_dir();
-    let text = std::fs::read_to_string(dir.join("ndls.traffic.toml")).map_err(|e| format!("data/ndls.traffic.toml: {e}"))?;
+    let src = dir.join(format!("{code}.traffic.toml"));
+    if code != "ndls" && !src.exists() { return Ok(None); }
+    let text = std::fs::read_to_string(&src).map_err(|e| format!("data/{code}.traffic.toml: {e}"))?;
     let out = traffic::bake(&text)?;
-    let tmp = dir.join("ndls.traffic.tmp");
-    std::fs::write(&tmp, &out).map_err(|e| format!("ndls.traffic.tmp: {e}"))?;
-    std::fs::rename(&tmp, dir.join("ndls.traffic")).map_err(|e| format!("ndls.traffic: {e}"))?;
-    Ok(out.len())
+    let tmp = dir.join(format!("{code}.traffic.tmp"));
+    std::fs::write(&tmp, &out).map_err(|e| format!("{code}.traffic.tmp: {e}"))?;
+    std::fs::rename(&tmp, dir.join(format!("{code}.traffic"))).map_err(|e| format!("{code}.traffic: {e}"))?;
+    Ok(Some(out.len()))
 }
 
 fn main() {
-    match bake_traffic() {
-        Ok(n) => println!("wrote data/ndls.traffic ({n} bytes)\n"),
+    let code = station();
+    if code.is_empty() || !code.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {
+        eprintln!("cabin-osm: station code must be lower-case letters and digits: '{code}'");
+        std::process::exit(2);
+    }
+    match bake_traffic(&code) {
+        Ok(Some(n)) => println!("wrote data/{code}.traffic ({n} bytes)\n"),
+        Ok(None) => println!("no data/{code}.traffic.toml: traffic not baked\n"),
         Err(e) => {
-            eprintln!("cabin-osm: {e}; the old data/ndls.traffic stays.");
+            eprintln!("cabin-osm: {e}; the old data/{code}.traffic stays.");
             std::process::exit(1);
         }
     }
-    let (yard, rep, ov_lines) = match run() {
+    let (yard, rep, ov_lines) = match run(&code) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("cabin-osm: {e}; the old data/ndls.yard stays.");
+            eprintln!("cabin-osm: {e}; the old data/{code}.yard stays.");
             std::process::exit(1);
         }
     };
@@ -1273,14 +1325,14 @@ fn main() {
     }
     println!("override lines in use: {ov_lines} (stop and ask above {MAX_OVERRIDE_LINES})");
     if !rep.failures.is_empty() {
-        println!("\nGATE FAILED ({} platforms); the old data/ndls.yard stays:", rep.failures.len());
+        println!("\nGATE FAILED ({} platforms); the old data/{code}.yard stays:", rep.failures.len());
         for f in &rep.failures {
             println!("  {f}");
         }
         std::process::exit(1);
     }
     let dir = data_dir();
-    let tmp = dir.join("ndls.yard.tmp");
+    let tmp = dir.join(format!("{code}.yard.tmp"));
     let text = yard.to_text();
     // The file the game will read must parse back to exactly this yard.
     if Yard::parse(&text).as_ref() != Ok(&yard) {
@@ -1293,15 +1345,15 @@ fn main() {
         if accept {
             println!("\n--accept-worse: writing anyway. {why}");
         } else {
-            println!("\nREFUSED: {why}\nThe old data/ndls.yard stays. If the change is meant, run: cargo run -p cabin-osm -- --accept-worse");
+            println!("\nREFUSED: {why}\nThe old data/{code}.yard stays. If the change is meant, run: cargo run -p cabin-osm -- {code} --accept-worse");
             std::process::exit(1);
         }
     };
-    match std::fs::read_to_string(dir.join("ndls.yard")) {
+    match std::fs::read_to_string(dir.join(format!("{code}.yard"))) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => refuse(&format!("data/ndls.yard could not be read ({e}), so nothing can be compared.")),
+        Err(e) => refuse(&format!("data/{code}.yard could not be read ({e}), so nothing can be compared.")),
         Ok(old_text) => match Yard::parse(&old_text) {
-            Err(e) => refuse(&format!("data/ndls.yard does not parse with this build ({}), so nothing can be compared.", e.0)),
+            Err(e) => refuse(&format!("data/{code}.yard does not parse with this build ({}), so nothing can be compared.", e.0)),
             Ok(old) => {
                 let l = losses(&old, &yard);
                 if !l.is_empty() {
@@ -1310,9 +1362,9 @@ fn main() {
             }
         },
     }
-    std::fs::write(&tmp, &text).expect("write ndls.yard.tmp");
-    std::fs::rename(&tmp, dir.join("ndls.yard")).expect("rename ndls.yard");
-    println!("\nGATE PASSED. wrote data/ndls.yard ({} bytes)", text.len());
+    std::fs::write(&tmp, &text).expect("write the yard's .tmp");
+    std::fs::rename(&tmp, dir.join(format!("{code}.yard"))).expect("rename the yard into place");
+    println!("\nGATE PASSED. wrote data/{code}.yard ({} bytes)", text.len());
 }
 
 #[cfg(test)]
@@ -1321,7 +1373,7 @@ mod tests {
 
     /// Metres east and north of the box centre, as latitude and longitude.
     fn ll(x: f64, y: f64) -> (f64, f64) {
-        let (lat0, lon0) = ((BBOX.0 + BBOX.2) / 2.0, (BBOX.1 + BBOX.3) / 2.0);
+        let (lat0, lon0) = ((NDLS_BBOX.0 + NDLS_BBOX.2) / 2.0, (NDLS_BBOX.1 + NDLS_BBOX.3) / 2.0);
         (
             lat0 + (y / EARTH_R_M).to_degrees(),
             lon0 + (x / (EARTH_R_M * lat0.to_radians().cos())).to_degrees(),
@@ -1369,7 +1421,7 @@ mod tests {
     }
 
     fn run_synthetic(w: bool, e: bool, c: &str) -> (Yard, Report) {
-        extract(&parse_osm(&synthetic(w, e, c)).unwrap(), &Overrides::default()).unwrap()
+        extract(&parse_osm(&synthetic(w, e, c)).unwrap(), &Overrides::default(), NDLS_BBOX).unwrap()
     }
 
     #[test]
@@ -1422,7 +1474,7 @@ mod tests {
     fn an_unneeded_siding_stays_a_siding() {
         // Leg C carries no platform here: drop the platform and C must not be promoted.
         let json = synthetic(true, false, "siding").replace(r#""railway":"platform""#, r#""railway":"disused""#);
-        let (yard, _) = extract(&parse_osm(&json).unwrap(), &Overrides::default()).unwrap();
+        let (yard, _) = extract(&parse_osm(&json).unwrap(), &Overrides::default(), NDLS_BBOX).unwrap();
         assert!(yard.promoted.is_empty());
         assert!(yard.edges.iter().filter(|e| e.way == 102).all(|e| e.kind == Kind::Siding));
     }
@@ -1430,7 +1482,7 @@ mod tests {
     #[test]
     fn an_override_naming_a_missing_way_refuses_the_build() {
         let ov = parse_overrides("[kind]\n999 = \"yard\"\n").unwrap();
-        let err = extract(&parse_osm(&synthetic(true, false, "")).unwrap(), &ov).err().unwrap();
+        let err = extract(&parse_osm(&synthetic(true, false, "")).unwrap(), &ov, NDLS_BBOX).err().unwrap();
         assert!(err.contains("way 999"), "{err}");
     }
 
@@ -1450,7 +1502,7 @@ mod tests {
             els.push(format!(r#"{{"type":"way","id":{id},"nodes":[{a},{b}],"tags":{{"railway":"rail","usage":"main"}}}}"#));
         }
         let json = format!(r#"{{"osm3s":{{"timestamp_osm_base":"test"}},"elements":[{}]}}"#, els.join(","));
-        extract(&parse_osm(&json).unwrap(), &Overrides::default()).unwrap().0
+        extract(&parse_osm(&json).unwrap(), &Overrides::default(), NDLS_BBOX).unwrap().0
     }
 
     #[test]
@@ -1482,13 +1534,13 @@ mod tests {
         assert!(l.iter().any(|x| x.starts_with("1 portals lost: E1")), "{l:?}");
         // A platform outline gone, as in a truncated Overpass answer.
         let json = synthetic(true, true, "").replace(r#""railway":"platform""#, r#""railway":"disused""#);
-        let (no_platform, _) = extract(&parse_osm(&json).unwrap(), &Overrides::default()).unwrap();
+        let (no_platform, _) = extract(&parse_osm(&json).unwrap(), &Overrides::default(), NDLS_BBOX).unwrap();
         let l = losses(&old, &no_platform);
         assert!(l.iter().any(|x| x.starts_with("1 platforms lost: 1")), "{l:?}");
         assert!(l.iter().any(|x| x.starts_with("1 portal-to-platform paths lost: W1->P1")), "{l:?}");
         // A track way gone: leg C, which the platform stands beside.
         let json = synthetic(true, true, "").replace(r#""id":102,"nodes":[3,6,7]"#, r#""id":102,"nodes":[]"#);
-        let (no_leg, _) = extract(&parse_osm(&json).unwrap(), &Overrides::default()).unwrap();
+        let (no_leg, _) = extract(&parse_osm(&json).unwrap(), &Overrides::default(), NDLS_BBOX).unwrap();
         assert!(losses(&old, &no_leg).iter().any(|x| x.starts_with("1 track ways lost: 102")));
     }
 
@@ -1507,7 +1559,7 @@ mod tests {
         assert!(yard.signals.iter().all(|s| s.origin == Origin::Generated));
         let before = yard.signals[0].offset;
         let ov = parse_overrides("[signal]\nHW1 = { shift_m = -20.0, name = \"W1H\" }\n").unwrap();
-        let (moved, _) = extract(&parse_osm(&synthetic(true, false, "")).unwrap(), &ov).unwrap();
+        let (moved, _) = extract(&parse_osm(&synthetic(true, false, "")).unwrap(), &ov, NDLS_BBOX).unwrap();
         let s = &moved.signals[0];
         assert_eq!((s.name.as_str(), s.origin), ("W1H", Origin::Override));
         // HW1 faces east (forward) on the west way, so -20 m moves it west.
@@ -1518,9 +1570,9 @@ mod tests {
     fn a_signal_override_naming_no_signal_or_leaving_its_edge_refuses_the_build() {
         let osm = parse_osm(&synthetic(true, false, "")).unwrap();
         let ov = parse_overrides("[signal]\nHX9 = { shift_m = 5 }\n").unwrap();
-        assert!(extract(&osm, &ov).err().unwrap().contains("no generated signal"));
+        assert!(extract(&osm, &ov, NDLS_BBOX).err().unwrap().contains("no generated signal"));
         let ov = parse_overrides("[signal]\nHW1 = { shift_m = 5000 }\n").unwrap();
-        assert!(extract(&osm, &ov).err().unwrap().contains("leaves its"));
+        assert!(extract(&osm, &ov, NDLS_BBOX).err().unwrap().contains("leaves its"));
     }
 
     /// B1 done-when: every value in the traffic profile says where it came
@@ -1587,10 +1639,14 @@ mod tests {
     /// The committed `.yard` must be what the committed OSM answer produces.
     #[test]
     fn committed_yard_matches_its_sources() {
+        // Every station with a .yard. HUK and NUR map platforms as open
+        // lines, NDLS as areas: both kinds must keep attaching.
         let dir = data_dir();
-        let Ok(committed) = std::fs::read_to_string(dir.join("ndls.yard")) else { return };
-        let (yard, rep, _) = run().unwrap();
-        assert!(rep.failures.is_empty(), "{:?}", rep.failures);
-        assert_eq!(yard.to_text(), committed, "data/ndls.yard is stale; run cargo run -p cabin-osm");
+        for code in ["ndls", "huk", "nur", "dee"] {
+            let Ok(committed) = std::fs::read_to_string(dir.join(format!("{code}.yard"))) else { continue };
+            let (yard, rep, _) = run(code).unwrap();
+            assert!(rep.failures.is_empty(), "{code}: {:?}", rep.failures);
+            assert_eq!(yard.to_text(), committed, "data/{code}.yard is stale; run cargo run -p cabin-osm -- {code}");
+        }
     }
 }

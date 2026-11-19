@@ -1,0 +1,389 @@
+{
+  "version": 0.6,
+  "generator": "Overpass API 0.7.62.11 87bfad18",
+  "osm3s": {
+    "timestamp_osm_base": "2026-11-18T23:22:51Z",
+    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+  },
+  "elements": [
+
+{
+  "type": "node",
+  "id": 3003239413,
+  "lat": 28.7820242,
+  "lon": 77.1095744
+},
+{
+  "type": "node",
+  "id": 3003239414,
+  "lat": 28.7852571,
+  "lon": 77.1084089
+},
+{
+  "type": "node",
+  "id": 3003239415,
+  "lat": 28.7861699,
+  "lon": 77.1080191
+},
+{
+  "type": "node",
+  "id": 3003239410,
+  "lat": 28.7802288,
+  "lon": 77.1102480
+},
+{
+  "type": "node",
+  "id": 3003239411,
+  "lat": 28.7802371,
+  "lon": 77.1102965
+},
+{
+  "type": "node",
+  "id": 3003239412,
+  "lat": 28.7807633,
+  "lon": 77.1100984
+},
+{
+  "type": "node",
+  "id": 3003239416,
+  "lat": 28.7896057,
+  "lon": 77.1067257
+},
+{
+  "type": "node",
+  "id": 3003239417,
+  "lat": 28.7898590,
+  "lon": 77.1066829
+},
+{
+  "type": "node",
+  "id": 3003239418,
+  "lat": 28.7928233,
+  "lon": 77.1055110
+},
+{
+  "type": "node",
+  "id": 3003239426,
+  "lat": 28.7994544,
+  "lon": 77.1029065
+},
+{
+  "type": "node",
+  "id": 2001816468,
+  "lat": 28.7957209,
+  "lon": 77.1044661,
+  "tags": {
+    "crossing:barrier": "full",
+    "railway": "level_crossing"
+  }
+},
+{
+  "type": "node",
+  "id": 3003239419,
+  "lat": 28.7956962,
+  "lon": 77.1044272,
+  "tags": {
+    "crossing:barrier": "full",
+    "railway": "level_crossing"
+  }
+},
+{
+  "type": "node",
+  "id": 3003239420,
+  "lat": 28.7970621,
+  "lon": 77.1039128
+},
+{
+  "type": "node",
+  "id": 3003239421,
+  "lat": 28.7971670,
+  "lon": 77.1039969,
+  "tags": {
+    "railway": "buffer_stop"
+  }
+},
+{
+  "type": "node",
+  "id": 3003239422,
+  "lat": 28.7974178,
+  "lon": 77.1038939
+},
+{
+  "type": "node",
+  "id": 3003239423,
+  "lat": 28.7974569,
+  "lon": 77.1038163
+},
+{
+  "type": "node",
+  "id": 3003239424,
+  "lat": 28.7975847,
+  "lon": 77.1036561
+},
+{
+  "type": "node",
+  "id": 3003239425,
+  "lat": 28.7980346,
+  "lon": 77.1036507
+},
+{
+  "type": "node",
+  "id": 3003239427,
+  "lat": 28.7995471,
+  "lon": 77.1031254
+},
+{
+  "type": "node",
+  "id": 3003239428,
+  "lat": 28.8030224,
+  "lon": 77.1015719
+},
+{
+  "type": "node",
+  "id": 3003239429,
+  "lat": 28.8030966,
+  "lon": 77.1017909
+},
+{
+  "type": "node",
+  "id": 3003239430,
+  "lat": 28.8046158,
+  "lon": 77.1011726
+},
+{
+  "type": "node",
+  "id": 3003239431,
+  "lat": 28.8048916,
+  "lon": 77.1009093
+},
+{
+  "type": "node",
+  "id": 3003239432,
+  "lat": 28.8051486,
+  "lon": 77.1009265
+},
+{
+  "type": "node",
+  "id": 3003239633,
+  "lat": 28.8052627,
+  "lon": 77.1008263
+},
+{
+  "type": "node",
+  "id": 3003239634,
+  "lat": 28.8054069,
+  "lon": 77.1006990,
+  "tags": {
+    "railway": "buffer_stop"
+  }
+},
+{
+  "type": "node",
+  "id": 6343503520,
+  "lat": 28.8014859,
+  "lon": 77.1023071
+},
+{
+  "type": "node",
+  "id": 2001816515,
+  "lat": 28.8094936,
+  "lon": 77.0992876,
+  "tags": {
+    "railway": "level_crossing"
+  }
+},
+{
+  "type": "node",
+  "id": 3003239635,
+  "lat": 28.8081565,
+  "lon": 77.0997371
+},
+{
+  "type": "node",
+  "id": 3003239636,
+  "lat": 28.8081597,
+  "lon": 77.0997914
+},
+{
+  "type": "node",
+  "id": 3003239638,
+  "lat": 28.8094803,
+  "lon": 77.0992427,
+  "tags": {
+    "railway": "level_crossing"
+  }
+},
+{
+  "type": "node",
+  "id": 3003239642,
+  "lat": 28.8143310,
+  "lon": 77.0974188
+},
+{
+  "type": "node",
+  "id": 3003239643,
+  "lat": 28.8143405,
+  "lon": 77.0974632
+},
+{
+  "type": "node",
+  "id": 3003239644,
+  "lat": 28.8152823,
+  "lon": 77.0970603
+},
+{
+  "type": "node",
+  "id": 3003239645,
+  "lat": 28.8152918,
+  "lon": 77.0971053
+},
+{
+  "type": "way",
+  "id": 296533068,
+  "nodes": [
+    3003239645,
+    3003239643,
+    2001816515,
+    3003239636,
+    3003239432,
+    6343503520,
+    3003239423,
+    2001816468,
+    3003239417,
+    3003239414,
+    3003239412,
+    3003239411
+  ],
+  "tags": {
+    "electrified": "contact_line",
+    "frequency": "50",
+    "gauge": "1676",
+    "name": "Delhi - Kalka Line",
+    "name:ur": "دہلی - کالکا لائن",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 296533069,
+  "nodes": [
+    3003239644,
+    3003239642,
+    3003239638,
+    3003239635,
+    3003239633,
+    3003239420,
+    3003239419,
+    3003239418,
+    3003239416,
+    3003239415,
+    3003239413,
+    3003239410
+  ],
+  "tags": {
+    "electrified": "contact_line",
+    "frequency": "50",
+    "gauge": "1676",
+    "name": "Delhi - Kalka Line",
+    "name:ur": "دہلی - کالکا لائن",
+    "passenger_lines": "2",
+    "railway": "rail",
+    "usage": "main",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 296533077,
+  "nodes": [
+    3003239427,
+    3003239429
+  ],
+  "tags": {
+    "railway": "platform"
+  }
+},
+{
+  "type": "way",
+  "id": 296533086,
+  "nodes": [
+    3003239428,
+    3003239426
+  ],
+  "tags": {
+    "railway": "platform"
+  }
+},
+{
+  "type": "way",
+  "id": 296533103,
+  "nodes": [
+    3003239420,
+    3003239424,
+    3003239431,
+    3003239633
+  ],
+  "tags": {
+    "electrified": "contact_line",
+    "frequency": "50",
+    "gauge": "1676",
+    "railway": "rail",
+    "service": "siding",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 296533104,
+  "nodes": [
+    3003239432,
+    3003239430,
+    3003239425,
+    3003239423
+  ],
+  "tags": {
+    "electrified": "contact_line",
+    "frequency": "50",
+    "gauge": "1676",
+    "railway": "rail",
+    "service": "siding",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 296533098,
+  "nodes": [
+    3003239425,
+    3003239422,
+    3003239421
+  ],
+  "tags": {
+    "electrified": "contact_line",
+    "frequency": "50",
+    "gauge": "1676",
+    "railway": "rail",
+    "voltage": "25000"
+  }
+},
+{
+  "type": "way",
+  "id": 296533092,
+  "nodes": [
+    3003239431,
+    3003239634
+  ],
+  "tags": {
+    "electrified": "contact_line",
+    "frequency": "50",
+    "gauge": "1676",
+    "railway": "rail",
+    "voltage": "25000"
+  }
+}
+
+  ]
+}

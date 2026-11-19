@@ -2,7 +2,7 @@
 
 Written 2026-11-19, against `games/cabin/` at commit `b2ff0d5` (the schematic panel, S0 to S4).
 Method: your photo of the TTC Transit Control Centre wall (Toronto), its colours sampled with PIL over the wall area (2410 × 680 px, pixels brighter than 90). Three web searches: the TTC display's colour key, Indian Railways' VDU and panel colours, and control-centre overview walls. `research/panel.md` and the Signal Engineering Manual rows re-read. `web/shell.html` header and `crates/web/src/lib.rs` `draw` re-read.
-**Built: L1 to L5, 2026-11-19.** Corrected 2026-11-19: until then this line said nothing below was implemented. "L1 to L5 built" at the end records the changes and the runs.
+**Built: L1 to L5, 2026-11-19. Colours superseded the same day by `PLAN-redesign.md` A4 (the Indian Railways VDU); the LED clock, the dot-matrix board, the dwell timers and dark-only stay.** Corrected 2026-11-19: until then this line said nothing below was implemented. "L1 to L5 built" at the end records the changes and the runs.
 
 **Decided 2026-11-19, in chat:** question 1, TTC colours; question 2, dark only.
 

@@ -1,0 +1,49 @@
+yard 3
+origin 28.801250 77.102500
+base 2026-11-18T23:22:51Z
+promoted 296533103 siding
+promoted 296533104 siding
+node 2001816468 191.6 -614.8
+node 3003239419 187.8 -617.6
+node 3003239420 137.7 -465.7
+node 3003239421 145.9 -454.0
+node 3003239423 128.3 -421.8
+node 3003239425 112.1 -357.5
+node 3003239431 -155.0 404.9
+node 3003239432 -153.3 433.5
+node 3003239633 -163.1 446.2
+node 3003239634 -175.5 462.2
+node 3003239635 -269.2 768.0
+node 3003239636 -263.9 768.3
+edge 11 7 running 352.6 296533068 -263.9,768.3;-153.3,433.5
+edge 7 4 running 900.4 296533068 -153.3,433.5;-18.8,26.2;128.3,-421.8
+edge 4 0 running 203.2 296533068 128.3,-421.8;191.6,-614.8
+edge 10 8 running 338.8 296533069 -269.2,768.0;-163.1,446.2
+edge 8 2 running 960.2 296533069 -163.1,446.2;137.7,-465.7
+edge 2 1 running 159.9 296533069 137.7,-465.7;187.8,-617.6
+edge 6 9 running 60.9 296533092 -155.0,404.9;-175.5,462.2
+edge 5 3 running 102.2 296533098 112.1,-357.5;135.8,-426.1;145.9,-454.0
+edge 2 6 running 918.7 296533103 137.7,-465.7;112.7,-407.6;-155.0,404.9
+edge 6 8 running 42.0 296533103 -155.0,404.9;-163.1,446.2
+edge 7 5 running 834.5 296533104 -153.3,433.5;-129.3,374.3;112.1,-357.5
+edge 5 4 running 66.2 296533104 112.1,-357.5;128.3,-421.8
+point 2 5 4 8
+point 4 2 1 11
+point 5 10 7 11
+point 6 8 6 9
+point 7 0 1 10
+point 8 3 4 9
+platform 2 10 415.6 296533077
+platform 1 8 417.5 296533086
+portal N1 10 3
+portal N2 11 0
+portal S1 1 5
+portal S2 0 2
+signal HN1 home 3 308.8 ab generated -
+signal HN2 home 0 322.6 ab generated -
+signal HS1 home 5 30.0 ba generated -
+signal HS2 home 2 30.0 ba generated -
+signal ST2S starter 10 824.5 ab generated 0
+signal ST2N starter 10 10.0 ba generated 0
+signal ST1N starter 8 908.7 ab generated 1
+signal ST1S starter 8 10.0 ba generated 1

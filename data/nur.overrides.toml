@@ -1,0 +1,5 @@
+# Narela (NUR). OpenStreetMap gives neither platform a number.
+# Numbered west to east, as NDLS's are: assumed, not read from a source.
+[ref]
+296533083 = "1"
+296533073 = "2"

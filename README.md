@@ -10,6 +10,14 @@ offered at the portals, set routes in to a platform and out again, and the
 interlocking refuses every route that is not safe. The score is three numbers,
 never one.
 
+You start smaller. A ladder of three real stations near Delhi, each from
+OpenStreetMap, leads up to NDLS: Holambi Kalan (2 platforms, 3 trains),
+Narela (2 platforms, 5 trains) and Delhi Sarai Rohilla (5 platforms, 6
+trains). Their trains are invented and numbered L101 and up, which Indian
+Railways never uses. A guide line under the panel names the next control to
+press, and rings or outlines it; its Hide button puts it away, and the
+command menu brings it back.
+
 ## Run it
 
 Open `dist/index.html` in Chrome (the verify scripts run Chromium; other
@@ -20,10 +28,10 @@ Rebuild and check after a change, from `games/cabin/`:
 
 ```sh
 ./build.sh                                                            # dist/index.html
-env CARGO_TARGET_DIR=$HOME/.cache/cabin-target cargo test --release --workspace   # 76 tests, about 3 min
+env CARGO_TARGET_DIR=$HOME/.cache/cabin-target cargo test --release --workspace   # 80 tests, about 3 min
 python3 tools/verify_b8.py /tmp/cabin-shots                           # Playwright, real clicks
-env CARGO_TARGET_DIR=$HOME/.cache/cabin-target cargo run -p cabin-osm  # re-extract after editing data/ndls.overrides.toml
-./fetch-osm.sh                                                        # refresh data/ndls.osm.json from Overpass; rarely
+env CARGO_TARGET_DIR=$HOME/.cache/cabin-target cargo run -p cabin-osm -- huk  # re-extract one station after editing data/<code>.overrides.toml
+./fetch-osm.sh huk 28.7940,77.0940,28.8085,77.1110                    # refresh a station from Overpass; no arguments: NDLS
 ```
 
 **Keep `CARGO_TARGET_DIR` on every `cargo` command.** Without it, cargo
@@ -32,7 +40,7 @@ extractor) and syncs it. `build.sh` sets it itself.
 
 `build.sh` needs the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` at
 the version in `Cargo.lock` (0.2.130), and `wasm-opt` (binaryen). It checks
-the wasm-bindgen version before it builds. `tools/README.md` lists the five
+the wasm-bindgen version before it builds. `tools/README.md` lists the six
 verify scripts and what each covers. Run `./build.sh` before any of them: a
 script run on an old page proves nothing about the change.
 
@@ -54,13 +62,16 @@ script run on an old page proves nothing about the change.
 
 | Mode | Traffic | Scored |
 |---|---|---|
+| Level 1 to 3, `?station=huk`, `nur`, `dee` | the level's invented trains; done when every one has left by a portal, which opens the next level | yes, no bests |
 | Practice | 2 to 6 trains in 30 game minutes | no |
 | Light / Normal / Peak | 0.5 / 0.75 / 1.0 of the busy day's hourly rate: about 13 / 19 / 26 trains | yes |
 
 A shift is 90 game minutes, 06:30 to 08:00, which is 22.5 real minutes at
 `TIME_SCALE` 4. At 08:00 the page pauses and saves any best. `?mode=peak&seed=7`
 replays a shift: same seed, same trains, same times. The address bar always
-carries the shift you are playing.
+carries the shift you are playing. A bare URL opens the first level you have
+not done; a link with `?mode=` or `?seed=` and no station opens NDLS, so
+replay links from before the ladder still work.
 
 **The score is "held at red".** Trains handled counts trains that left by a
 portal. Delay counts game minutes a train stood outside a portal after it was
@@ -122,13 +133,23 @@ Each rule constant in `consts.rs` names a row of `rails/research.md` and the
 phrase it rests on. `tests/ledger.rs` reads that file and fails if the row no
 longer holds the phrase, or if the file is missing. It does not skip.
 
-**A crowded signal head steps back, and a stalk points to its post.** Two
+**A crowded signal head steps back along its own track, with no stalk.** Two
 Starters 10 m before one junction stood 3.3 px apart at the default view, and
 17 pairs were closer than the 44 px a click target needs. No stretch of the
 panel separates two posts that close. So when the default view is framed,
 each head takes the place nearest its post, along its own track, that is
-45 px from every other head, and a thin line joins it to the post. The sim
-and the trains still stop at the post. 17 pairs became 0.
+45 px from every other head. The sim and the trains still stop at the post.
+17 pairs became 0. A thin line from each moved head to its post was drawn
+until 2026-11-19 and taken out: in white it read as a set route, and on a
+schematic a head says which track and which way, not which metre.
+
+**Each platform is a box beside its track, with its name and dwell inside.**
+Names floated between rows, and with rows 22 px apart a name sat as close to
+the track above as to its own. The box runs along the platform's track, on
+the side its train's describer takes, and gives way to any head or signal
+name that stands in that band: 8 of NDLS's 16 boxes held a head or a name
+before that rule, 0 after (`verify_b10.py`). The box sizes are assumed; no
+source fixes VDU geometry.
 
 **The panel is a schematic, not a map, and it says so.** The first panel
 drew OpenStreetMap's polylines with the cross-track spacing stretched six
@@ -140,19 +161,22 @@ and connections are the yard's; lengths and angles are drawn. The station
 area is at true length, the throats at 0.35, and the whole drawing is 1.88
 times the true 2,256 m, because the jogs need room.
 
-**The panel looks like the TTC control-centre wall, and says it is not
-Indian Railways'.** Clear track is lit pale blue, a set route green (path
-solid, overlap dashed), occupied track red over any route, each train a
-white describer box, each berthed train's dwell counting down under its
-platform. The header is a seven-segment LED clock and a dot-matrix board,
-drawn in SVG and canvas, so no font is fetched. The look is a photo of the
-Toronto Transit Control Centre wall (`PLAN-look.md`); its colour key is not
-published, so green and red are read from where they lie on the track.
-Only red for occupied is also Indian Railways' (`research/panel.md` PN-03):
-an Indian Railways panel shows clear track unlit and a set route white,
-which the S3 build drew until 2026-11-19. A point's leg that is not lying
-is broken for 6 px at the switch; that look is assumed. The page is dark
-only.
+**The panel draws an Indian Railways VDU, on a grid.** Clear track is
+unlit, drawn dim grey so the layout reads; a set route is white (path
+solid, overlap dashed); occupied track is red over any route, as the
+track-circuit chapter (2023, §17.2.6) and the Signal Engineering Manual
+(§7.172.2) say (`research/panel.md`). Every node sits on a 30 m grid, so a
+45° jog over k rows spans exactly k columns: off the grid, 140 nodes had
+86 x positions and 35 pairs under 15 m apart, which read as lines that
+nearly meet (`PLAN-redesign.md` A3). A dead end gets a buffer-stop bar,
+and a line that runs on into yard track gets a dashed end. Each train is a
+white describer box; each berthed train's dwell counts down under its
+platform. The header keeps the seven-segment LED clock and dot-matrix board
+of `PLAN-look.md`, drawn in SVG and canvas, so no font is fetched. The TTC
+wall look of that plan was dropped the same day: no source gives its
+colours a meaning (`research/control-rooms.md` TR-05). A point's leg that
+is not lying is broken for 6 px at the switch; that look is assumed. The
+page is dark only.
 
 ## What is assumed and what is solid
 
@@ -169,8 +193,9 @@ the code.
 | Hourly spread, peak 22 at 09:00 (one 2016 survey, secondary) | 275 trains on a busy day; one third from the north; the type mix | a timetable newer than 2016 |
 | 139 train numbers and names (secondary; 28 unconfirmed) | rake lengths, mostly; terminating dwell 600 to 1200 s | — |
 | — | 30 m fouling length, 180 s block headway, 120 s approach release, 0.3 and 0.5 m/s² | measured fouling marks; NR practice |
-| Occupied track red over any route (`research/panel.md` PN-03) | every other panel colour: the TTC wall's look, from a photo with no published key (PN-09); a point's lie and a signal at danger (PN-04 to PN-06) | a photo or drawing of an NDLS panel |
+| Panel colours: clear track unlit, set route white, occupied red over any route (`research/panel.md` PN-01 to PN-03, PN-08) | the dim grey for unlit track; white describer boxes; a point's lie and a signal at danger (PN-04 to PN-06) | a photo or drawing of an NDLS panel |
 | Track order and connections on the panel (from the yard) | every drawn length and angle: rows 30 m apart, 45° jogs, throats at 0.35 of true length | — |
+| Ladder stations' track (OpenStreetMap, extract of 2026-11-18) | their trains, all invented; HUK's and NUR's platform numbers, west to east; DEE's ref-less platform 300 m away, dropped as not DEE's (`research/stations.md`) | timetables of the trains that call there |
 | — | `TIME_SCALE` 4, chosen from the soak: 2.0 route decisions per real minute on average, 2.6 in the peak hour | your play |
 
 ## What is not right yet
@@ -187,10 +212,17 @@ the code.
   each other for 8 m to 1,088 m, so the lie gap cannot show and a route over
   either leg looks the same. The schematic layout puts them there; the
   sim's routes are right. `verify_b9.py` lists them and skips them.
-- **A set route and clear track differ by hue, not brightness.** Green
-  `#5fd93c` against pale blue `#a8c4f2` is 1.03:1; the route is drawn 3 px
-  against the track's 2 px. The photo has the same property. Red occupied
-  is 2.21:1 against the track.
+- **NDLS is dense.** 33 rows fit the default view at 22 px each; a real
+  VDU splits a big yard across screens (`research/control-rooms.md` IN-06).
+  The ladder now leads up to it.
+- **Delhi Sarai Rohilla's box is wide.** It catches 14 portals, more than
+  NDLS's 12, so level 3 is a bigger step than its 5 platforms suggest. Three
+  tighter boxes round the platforms (2026-11-19) each failed the gate: 3 of 5
+  platforms attached, each reached from 2 portals only. A tighter box needs
+  the throats read off a map first.
+  Sahibabad Junction was dropped: Codex's box missed the station.
+- **9 signal heads still slide back** up to 45 px from their post to stay
+  44 px from the next; nothing on the panel shows the post itself.
 - **The 144 yard edges are stubs.** They need 65 rows and form an ordering
   cycle; no train runs on them.
 - **Platforms 15 and 16 are not worked.** Their only arrivals came from the

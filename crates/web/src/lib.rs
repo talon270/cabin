@@ -19,7 +19,7 @@ use cabin_sim::interlock::Aspect;
 use cabin_sim::route::{Exit, Lie, Res, RouteId, SignalId};
 use cabin_sim::traffic::{Mode, NDLS_TRAFFIC, Profile};
 use cabin_sim::yard::{Kind, SignalKind, Yard};
-use cabin_sim::{Action, World};
+use cabin_sim::{Action, World, level};
 use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
@@ -54,8 +54,10 @@ const HEAD_R_PX: f64 = 4.5;
 /// Heads closer than this, CSS px, share a click target, so the hit-slop
 /// card's 44 px plus a pixel of margin. Two Starters 10 m before one
 /// junction stood 3 px apart: no stretch separates them, so a crowded head
-/// slides back along its own track, HEAD_STEP_M at a time, and a stalk
-/// joins it to the post. The sim and the train still stop at the post.
+/// slides back along its own track, HEAD_STEP_M at a time. No stalk joins
+/// it to the post: a stalk read as track (PLAN-redesign.md A3), and on a
+/// schematic a head marks which track and which way, not the exact metre.
+/// The sim and the train still stop at the post.
 const HEAD_GAP_PX: f64 = 45.0;
 const HEAD_STEP_M: f64 = 2.0;
 const HEAD_PASSES: usize = 4;
@@ -63,6 +65,17 @@ const HEAD_PASSES: usize = 4;
 /// switch (research/panel.md PN-04, PN-05: assumed). Cut out of the stroke,
 /// not painted over, so the gap never eats the leg that lies.
 const LIE_GAP_PX: f64 = 6.0;
+/// Half a buffer stop's bar, and half a yard continuation's dashes, CSS px.
+const END_PX: f64 = 6.0;
+/// A platform box: beside its track on the side the train's describer
+/// takes, BOX_GAP_PX clear of the track, BOX_H_PX tall, its ends pulled in
+/// BOX_INSET_PX so the platform's own Starter heads stand outside it. All
+/// assumed: no source fixes VDU geometry (research/control-rooms.md DR-05).
+const BOX_GAP_PX: f64 = 3.0;
+const BOX_H_PX: f64 = 15.0;
+const BOX_INSET_PX: f64 = 24.0;
+/// The dwell timer's left edge, CSS px into the box: past a 3-digit name.
+const DWELL_DX_PX: f64 = 36.0;
 
 /// The panel's colours, in the order the page reads them from CSS custom
 /// properties (`PALETTE` in web/shell.html). This file names no colour:
@@ -71,7 +84,8 @@ struct Palette {
     bg: String,
     fg: String,
     dim: String,
-    /// Track, lit when clear, as on the TTC wall (PLAN-look.md).
+    /// Track when clear: unlit on an Indian Railways panel (PN-01), drawn
+    /// dim so the layout reads.
     trk: String,
     /// A set and locked route; also a dwell still running.
     route: String,
@@ -221,6 +235,8 @@ pub struct App {
     paused: bool,
     /// The entry signal clicked first, and the route under the pointer.
     sel: Option<SignalId>,
+    /// The signal the page's next-step line points at; ringed dashed.
+    hint: Option<SignalId>,
     preview: Option<RouteId>,
     /// The line under the panel, whether it is a refusal, and a counter the
     /// page compares to know when to redraw it.
@@ -266,10 +282,19 @@ impl App {
     #[wasm_bindgen(constructor)]
     /// `mode` is `practice`, `light`, `normal` or `peak`; the page checks
     /// `?mode=` and says so before it gets here.
-    pub fn new(canvas_id: &str, seed: u32, mode: &str) -> Result<App, JsValue> {
+    /// `station` is `ndls` or a ladder level's code (`level.rs`); a level
+    /// ignores `mode` and `seed`: its trains are scripted.
+    pub fn new(canvas_id: &str, seed: u32, mode: &str, station: &str) -> Result<App, JsValue> {
         install_panic_hook();
-        let mode = Mode::parse(mode).ok_or_else(|| JsValue::from_str(&format!("no mode '{mode}'")))?;
-        let profile = Profile::parse(NDLS_TRAFFIC).map_err(|e| JsValue::from_str(&format!("data/ndls.traffic: {e}")))?;
+        let world = if station == "ndls" {
+            let mode = Mode::parse(mode).ok_or_else(|| JsValue::from_str(&format!("no mode '{mode}'")))?;
+            let profile = Profile::parse(NDLS_TRAFFIC).map_err(|e| JsValue::from_str(&format!("data/ndls.traffic: {e}")))?;
+            let yard = Yard::parse(cabin_sim::NDLS).map_err(|e| JsValue::from_str(&format!("data/ndls.yard: {}", e.0)))?;
+            World::shift(yard, profile, mode, u64::from(seed))
+        } else {
+            let l = level::level(station).ok_or_else(|| JsValue::from_str(&format!("no station '{station}'")))?;
+            World::level(l).map_err(|e| JsValue::from_str(&e))?
+        };
         let doc = web_sys::window()
             .and_then(|w| w.document())
             .ok_or_else(|| JsValue::from_str("no document"))?;
@@ -282,8 +307,8 @@ impl App {
             .get_context("2d")?
             .ok_or_else(|| JsValue::from_str("2d context unavailable"))?
             .dyn_into()?;
-        let yard = Yard::parse(cabin_sim::NDLS).map_err(|e| JsValue::from_str(&format!("data/ndls.yard: {}", e.0)))?;
-        let schematic = schematic::Schematic::new(&yard);
+        let yard = &world.yard;
+        let schematic = schematic::Schematic::new(yard);
         let shapes = schematic.shape.clone();
         let all = bounds(shapes.iter().flatten());
         let platforms = bounds(yard.platforms.iter().flat_map(|p| &shapes[p.edge]));
@@ -305,7 +330,6 @@ impl App {
             })
             .collect();
         let sig_pick = vec![0; sig_path.len()];
-        let world = World::shift(yard, profile, mode, u64::from(seed));
         let mut from = vec![Vec::new(); world.yard.signals.len()];
         for r in world.lock.routes() {
             from[r.entry].push(r.id);
@@ -330,6 +354,7 @@ impl App {
             owed: 0.0,
             paused: false,
             sel: None,
+            hint: None,
             preview: None,
             status: String::new(),
             refused: false,
@@ -382,10 +407,14 @@ impl App {
             ("Signals", "authored", format!("{} signals ({homes} Home, {} Starter), all placed by rule (C3-58, C3-63). None comes from OpenStreetMap or a diagram.", y.signals.len(), y.signals.len() - homes)),
             ("Routes", "authored", format!("{} routes: the shortest path for each pair of signals. Arrivals into a platform with no way out are removed.", self.world.lock.routes().len())),
             ("Aspects", "assumed", "Red with no route, yellow when the exit signal is red, green otherwise. The ledger does not settle a Starter's off aspect.".to_string()),
-            ("Traffic", "secondary", format!("About {p} trains on a busy day, from a 2016 survey of the station's berthing chart (AG18) and the datameet 2016 timetable, read {written}. No figure is from Indian Railways. The {pool} train numbers and names are real; their times are drawn from the seed.")),
+            if self.world.mode == Some(Mode::Level) {
+                ("Traffic", "invented", format!("{} invented trains, numbered L101 and up, which Indian Railways numbers never use. Their times, portals, rake lengths and dwells are set by the level, not researched.", pool))
+            } else {
+                ("Traffic", "secondary", format!("About {p} trains on a busy day, from a 2016 survey of the station's berthing chart (AG18) and the datameet 2016 timetable, read {written}. No figure is from Indian Railways. The {pool} train numbers and names are real; their times are drawn from the seed."))
+            },
             ("Score and shift", "assumed", "Three plain numbers, never blended. The shift length, its start and the mode fractions were chosen by you on 2026-11-18; see the constants below.".to_string()),
             ("Panel", "schematic", "Track order and connections are the yard's; lengths and angles are drawn, not measured.".to_string()),
-            ("Indications", "authored", "Clear track lit pale blue, a set route green, occupied track red over any route: the look of the TTC Transit Control Centre wall in Toronto, from a photo whose colour key is not published (research/panel.md PN-09). Red for occupied is also Indian Railways' (PN-03); an Indian Railways panel shows clear track unlit and a set route in white (PN-01, PN-02, PN-08).".to_string()),
+            ("Indications", "primary", "Clear track unlit (drawn dim grey so the layout reads), a set and locked route white, occupied track red over any route: the Indian Railways track-circuit chapter (2023) section 17.2.6 and Signal Engineering Manual section 7.172.2 (research/panel.md PN-01 to PN-03, PN-08). The dim grey and the white describer boxes are not from a source.".to_string()),
             ("Point lie", "assumed", "A point's leg that is not lying is drawn broken at the switch. A real panel shows the lie, but how it looks was not found (PN-04, PN-05).".to_string()),
         ]
         .into_iter()
@@ -418,6 +447,22 @@ impl App {
 
     pub fn mode(&self) -> String {
         self.world.mode.map_or("", Mode::name).to_string()
+    }
+
+    /// The ladder, smallest first: `code\tstation\tskill\ttrains`. NDLS,
+    /// the last rung, is not in it: it is the shift modes.
+    pub fn levels() -> Vec<String> {
+        level::LEVELS.iter().map(|l| format!("{}\t{}\t{}\t{}", l.code, l.station, l.skill, l.trains.len())).collect()
+    }
+
+    /// Every scripted train of this level has left by a portal.
+    pub fn level_done(&self) -> bool {
+        self.world.level_done()
+    }
+
+    /// Point the panel at a signal by name (a dashed ring), or at none.
+    pub fn set_hint(&mut self, name: &str) {
+        self.hint = self.world.yard.signals.iter().position(|s| s.name == name);
     }
 
     /// The shift's start and end on the game clock, seconds after midnight.
@@ -819,8 +864,17 @@ impl App {
         let y = &self.world.yard;
         self.dwells().into_iter().enumerate().filter_map(|(k, d)| {
             let (txt, late) = d?;
-            let (x, yy) = self.platform_label_xy(k)?;
-            Some(format!("P{}\t{x}\t{yy}\t{txt}\t{late}", y.platforms[k].name))
+            let (x0, _, top, _) = self.platform_box(k)?;
+            Some(format!("P{}\t{}\t{}\t{txt}\t{late}", y.platforms[k].name, x0 + DWELL_DX_PX, top + BOX_H_PX / 2.0))
+        }).collect()
+    }
+
+    /// Test hook: each platform's box on screen, CSS px, 4 numbers a
+    /// platform (left, right, top, bottom); NaN for one with no flat run.
+    pub fn platform_boxes(&self) -> Vec<f64> {
+        (0..self.world.yard.platforms.len()).flat_map(|k| {
+            let (l, r, t, b) = self.platform_box(k).unwrap_or((f64::NAN, f64::NAN, f64::NAN, f64::NAN));
+            [l, r, t, b]
         }).collect()
     }
 
@@ -1051,14 +1105,6 @@ impl App {
         ctx.set_stroke_style_str(&p.fg);
         for s in 0..self.sig_path.len() {
             let (x, y) = self.head_screen(s);
-            // A head slid back from a crowded post: a stalk to the post.
-            if self.sig_pick[s] > 0 {
-                let (px, py) = self.head_xy(self.sig_path[s][0]);
-                ctx.begin_path();
-                ctx.move_to(px, py);
-                ctx.line_to(x, y);
-                ctx.stroke();
-            }
             ctx.set_fill_style_str(match self.world.aspect(s) {
                 Aspect::Red => &p.asp[0],
                 Aspect::Yellow | Aspect::DoubleYellow => &p.asp[1],
@@ -1087,13 +1133,48 @@ impl App {
         dwell
     }
 
-    /// Platform `k`'s label point on screen: mid flat run, not mid vertex,
-    /// because a jogging platform's middle vertex is its jog corner, where
-    /// the Starter's head and name already sit.
-    fn platform_label_xy(&self, k: usize) -> Option<(f64, f64)> {
+    /// Platform `k`'s box on screen, `(left, right, top, bottom)`, above
+    /// its track: the longest stretch of its longest flat run, less
+    /// BOX_INSET_PX at each end, that no signal head or name stands in.
+    /// The flat run, not the whole edge, because a jogging platform's jog
+    /// corner is where its Starter's head and name sit. With rows 22 px
+    /// apart, a head on the next track up stands in this band, so the box
+    /// gives way to it rather than the head moving again.
+    fn platform_box(&self, k: usize) -> Option<(f64, f64, f64, f64)> {
         let s = &self.shapes[self.world.yard.platforms[k].edge];
         let run = s.windows(2).filter(|w| w[0].1 == w[1].1).max_by(|a, b| (a[1].0 - a[0].0).abs().total_cmp(&(b[1].0 - b[0].0).abs()))?;
-        Some(self.to_screen((run[0].0 + run[1].0) / 2.0, run[0].1))
+        let (a, b) = (self.to_screen(run[0].0, run[0].1), self.to_screen(run[1].0, run[1].1));
+        let (mut l, mut r) = (a.0.min(b.0), a.0.max(b.0));
+        if r - l > 2.0 * BOX_INSET_PX + 40.0 {
+            (l, r) = (l + BOX_INSET_PX, r - BOX_INSET_PX);
+        }
+        let bottom = a.1 - BOX_GAP_PX;
+        let top = bottom - BOX_H_PX;
+        // What stands in the band, as x spans: each head, each name.
+        let mut cuts: Vec<(f64, f64)> = Vec::new();
+        for (k, sig) in self.world.yard.signals.iter().enumerate() {
+            let (x, y) = self.head_screen(k);
+            let pad = HEAD_R_PX + 3.0;
+            if y + pad > top && y - pad < bottom {
+                cuts.push((x - pad, x + pad));
+            }
+            let ((_, _), (du, dv)) = self.sig_path[k][self.sig_pick[k]];
+            let (nx, ny) = (x - dv * 18.0, y - du * 18.0);
+            let half = sig.name.chars().count() as f64 * 3.0 + 2.0;
+            if ny + 6.0 > top && ny - 6.0 < bottom {
+                cuts.push((nx - half, nx + half));
+            }
+        }
+        cuts.sort_by(|p, q| p.0.total_cmp(&q.0));
+        let (mut best, mut from) = ((l, l), l);
+        for (c0, c1) in cuts.into_iter().chain([(r, r)]) {
+            let gap = (from, c0.min(r));
+            if gap.1 - gap.0 > best.1 - best.0 {
+                best = gap;
+            }
+            from = from.max(c1);
+        }
+        (best.1 > best.0).then_some((best.0, best.1, top, bottom))
     }
 
     /// Where each edge's stroke is cut short, CSS px at its `a` and `b`
@@ -1112,10 +1193,10 @@ impl App {
         cut
     }
 
-    /// The control-room wall of PLAN-look.md: clear track lit, a set route
-    /// in the route colour (path solid, overlap dashed), occupied track
-    /// sections red over any route (PN-03), each train's number in a filled
-    /// describer box. Draw order is that override order.
+    /// An Indian Railways VDU (research/panel.md): clear track dim, a set
+    /// route white (path solid, overlap dashed), occupied track sections red
+    /// over any route (PN-03), each train's number in a filled describer
+    /// box. Draw order is that override order.
     fn draw(&self, p: &Palette) {
         let ctx = &self.ctx;
         let w = &self.world;
@@ -1145,9 +1226,36 @@ impl App {
                 }
             }
         }
+
+        // Line ends: a buffer stop across a dead end, a short dashed run where
+        // the line goes on into yard track the panel does not work.
+        ctx.set_line_width(2.0);
+        for end in &self.schematic.ends {
+            let (x, yy) = self.to_screen(end.at.0, end.at.1);
+            // Screen direction of the line; panel v grows up the screen.
+            let (dx, dy) = (end.out.0, -end.out.1);
+            if end.into_yard {
+                let _ = ctx.set_line_dash(&js_sys::Array::of2(&JsValue::from(3.0), &JsValue::from(3.0)));
+                ctx.begin_path();
+                ctx.move_to(x, yy);
+                ctx.line_to(x + dx * END_PX * 2.0, yy + dy * END_PX * 2.0);
+                ctx.stroke();
+                let _ = ctx.set_line_dash(&js_sys::Array::new());
+            } else {
+                ctx.begin_path();
+                ctx.move_to(x - dy * END_PX, yy + dx * END_PX);
+                ctx.line_to(x + dy * END_PX, yy - dx * END_PX);
+                ctx.stroke();
+            }
+        }
+
+        // Platform boxes, outlined in the track colour: a platform is a
+        // place beside a track, not a track.
         ctx.set_line_width(1.0);
-        for stub in &self.schematic.stubs {
-            self.stroke(stub);
+        for k in 0..y.platforms.len() {
+            if let Some((l, r, t, b)) = self.platform_box(k) {
+                ctx.stroke_rect(l, t, r - l, b - t);
+            }
         }
 
         // Set routes: what the interlocking holds, solid where it is a live
@@ -1202,6 +1310,14 @@ impl App {
 
         // Choice: the entry ringed solid, its exits ringed dashed, the one
         // under the pointer ringed solid.
+        if let Some(s) = self.hint.filter(|&h| Some(h) != self.sel) {
+            ctx.set_stroke_style_str(&p.fg);
+            ctx.set_line_width(2.0);
+            let _ = ctx.set_line_dash(&js_sys::Array::of2(&JsValue::from(4.0), &JsValue::from(4.0)));
+            let (x, yy) = self.head_screen(s);
+            self.ring(x, yy, HIT_PX / 2.0 + 4.0);
+            let _ = ctx.set_line_dash(&js_sys::Array::new());
+        }
         if let Some(s) = self.sel {
             ctx.set_stroke_style_str(&p.fg);
             ctx.set_line_width(2.0);
@@ -1222,19 +1338,22 @@ impl App {
         }
         self.draw_heads(p);
 
-        // Names in white bold sans, as the wall's station names; under each,
-        // its berthed train's dwell.
+        // Each platform's name in white bold sans, as the wall's station
+        // names, at the left of its box; beside the name, its berthed
+        // train's dwell.
         let dwell = self.dwells();
         ctx.set_font("700 12px \"Liberation Sans\", Arial, sans-serif");
+        ctx.set_text_align("left");
         for (k, pl) in y.platforms.iter().enumerate() {
-            let Some((x, yy)) = self.platform_label_xy(k) else { continue };
+            let Some((x0, _, top, _)) = self.platform_box(k) else { continue };
             ctx.set_fill_style_str(&p.fg);
-            let _ = ctx.fill_text(&format!("P{}", pl.name), x, yy - 9.0);
+            let _ = ctx.fill_text(&format!("P{}", pl.name), x0 + 4.0, top + BOX_H_PX / 2.0);
             if let Some((txt, late)) = &dwell[k] {
                 ctx.set_fill_style_str(if *late { &p.occ } else { &p.route });
-                let _ = ctx.fill_text(txt, x, yy + 10.0);
+                let _ = ctx.fill_text(txt, x0 + DWELL_DX_PX, top + BOX_H_PX / 2.0);
             }
         }
+        ctx.set_text_align("center");
         ctx.set_fill_style_str(&p.fg);
         for (k, p) in y.portals.iter().enumerate() {
             let (x, yy) = self.portal_xy(k);
